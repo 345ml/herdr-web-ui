@@ -419,6 +419,8 @@ export function createServer(
     opencodeDb?: string;
     /** Native Devin store; tests pass an isolated SQLite database. */
     devinDbPath?: string;
+    /** Native Hermes store; pane process HERMES_HOME wins when this is unset. Tests use an isolated store. */
+    hermesHome?: string;
     updates?: UpdateService;
     /** updates herdr itself (server/herdr-update.ts); unset, the app offers no herdr update. Tests pass one that runs a stand-in herdr. */
     herdrUpdate?: HerdrUpdater;
@@ -499,7 +501,7 @@ export function createServer(
         send(client, { type: "conversation-changed", pane_id: paneId, signature });
       }
     }
-  }, options.codexHome, options.devinDbPath, options.opencodeDb);
+  }, options.codexHome, options.devinDbPath, options.opencodeDb, options.hermesHome);
 
   function releaseConversation(paneId: string): void {
     for (const client of clients) {
@@ -2321,7 +2323,7 @@ export function createServer(
         const ref = url.searchParams.get("ref");
         if (!paneId || !ref) return badRequest("missing_parameter", "pane_id and ref query parameters are required");
         try {
-          const output = await toolOutput(paneId, ref, options.codexHome, options.opencodeDb);
+          const output = await toolOutput(paneId, ref, options.codexHome, options.opencodeDb, options.hermesHome);
           if (output === null) return jsonResponse({ error: { code: "output_not_found", message: "no such tool call in this pane's conversation" } }, 404);
           // a tool call's id names its output for good; OpenCode's ref names a place in a row it rewrites in place
           const cacheControl = OPENCODE_TOOL_REF.test(ref) ? "private, no-store" : "private, max-age=86400, immutable";
@@ -2355,7 +2357,7 @@ export function createServer(
           from: url.searchParams.get("from") ?? undefined,
         };
         try {
-          const { version, ...conversation } = await paneConversation(paneId, options.codexHome, page, options.devinDbPath, options.opencodeDb);
+          const { version, ...conversation } = await paneConversation(paneId, options.codexHome, page, options.devinDbPath, options.opencodeDb, options.hermesHome);
           // no-store keeps the browser's own cache out of it, so the chat sees the 304.
           // weak: the same answer goes out gzipped or plain (compress.ts), which are not the same bytes
           const etag = `W/"${version}"`;

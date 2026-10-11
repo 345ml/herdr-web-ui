@@ -106,7 +106,7 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *         history, soft-wrapped lines joined; a terminal selection that outlives one screen)
  *  POST   /api/pane/input  { pane_id, text }   -> { ok: true }
  *  GET    /api/pane/conversation?pane_id=    -> ConversationResponse (structured agent
- *         transcript turns - claude, codex, omp, omo, gjc, pi or devin; source:"scrollback" when the pane has no
+ *         transcript turns - claude, codex, omp, omo, gjc, pi, devin, OpenCode or hermes; source:"scrollback" when the pane has no
  *         recognized store)
  *  POST   /api/pane/close { pane_id }         -> { ok: true } (pane.close RPC; the collector's
  *         session-changed broadcast removes it from every client's sidebar)
@@ -372,6 +372,8 @@ export type ConversationPart =
   /** `error`: the call failed (the agent recorded it so, or its output says a command exited non-zero) */
   | {
     kind: "tool"; name: string; summary: string; input: string; output: string; error?: boolean;
+    /** Hermes could not load a tool-call list whose arguments exceeded its page limit. */
+    arguments_omitted?: true;
     skill?: SkillActivity;
     /** set when `output` was cut: the call's id, for GET /api/pane/conversation/tool-output, and the whole output's length */
     output_ref?: string; output_size?: number;
@@ -467,7 +469,7 @@ export interface OmoActivity {
 export interface ConversationResponse {
   /** Stable across appends; changes on transcript replacement or native context clear. */
   history_id?: string;
-  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "scrollback";
+  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "scrollback";
   turns: ConversationTurn[];
   metadata?: ConversationMetadata;
   /**
