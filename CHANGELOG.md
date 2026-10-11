@@ -15,6 +15,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   to be reviewed before Send now, since the tab that held it may still send it.
   ([#836](https://github.com/devswha/herdr-web-ui/pull/836))
 
+### Changed
+- New workspace's recent folders leave out worktree checkouts (herdr's under `~/.herdr/worktrees`
+  and the linked worktrees a PC has open) and temporary folders such as `/tmp`, and offer up to
+  eight folders instead of three: a phone swipes them sideways on one row, a wider screen wraps them.
+
 ### Fixed
 - On a phone, Back closes every dialog drawn as a sheet the way it closes a ⋯ menu: the plan, the
   command palette, confirmations, the file list, the worktree dialog, Rename pane and the diagram
