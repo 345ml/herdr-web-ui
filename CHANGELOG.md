@@ -96,6 +96,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   every pane squeezed into herdr's grid (since 0.4.6). The tab's menu lists the tab's panes to
   switch between them. Wider screens keep the split, and herdr's own layout is not changed.
   ([#819](https://github.com/devswha/herdr-web-ui/pull/819))
+- Markdown files opened in a new tab keep their rendered preview instead of showing source.
+  The link stays on the file's PC without requiring its original pane; Open raw file and Download
+  still provide the original contents. ([#823](https://github.com/devswha/herdr-web-ui/pull/823))
 - Chat hides a rejected conversation immediately, even when reading its terminal fallback
   is slow or fails, so removed history does not remain on screen.
   ([#789](https://github.com/devswha/herdr-web-ui/pull/789) by @infowolfe)

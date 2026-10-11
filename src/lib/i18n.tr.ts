@@ -352,6 +352,7 @@ export const TR: Record<string, string> = {
   "Showing the first {shown} of {total}.": "Toplam {total} öğeden ilk {shown} gösteriliyor.",
   "This image is {size}; download it to view.": "Bu görüntü {size} boyutunda; görüntülemek için indirin.",
   "Open in a new tab": "Yeni sekmede aç",
+  "Open raw file": "Ham dosyayı aç",
   "Download": "İndir",
   "Close file": "Dosyayı kapat",
   "No readable file at this path.": "Bu yolda okunabilir dosya yok.",
