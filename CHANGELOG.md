@@ -47,6 +47,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - A phone showing one pane of a split tab no longer resizes the tab's other panes to its own
   screen: they stay mounted behind the one shown and now keep the size the pty has, so a PC
   drawing the split keeps its own sizes. A pane shown again on the phone takes its size then.
+- The update line above the pane stays one line on a phone and on a computer: a long sentence ends
+  in an ellipsis instead of wrapping its buttons onto a second row, the line after an update closes
+  with an × like a PC's line, and an install's step, count and bar share one row. The warning to
+  save unsent drafts before a reload is the one line still read in full, so it may wrap.
 
 ## [0.4.7] - 2026-10-12
 
