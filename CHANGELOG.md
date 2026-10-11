@@ -27,6 +27,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - On a phone, a two-finger pinch on the terminal changes its font size live (10–22 px), with a
   badge showing the size; the shared pty resizes once, when a finger lifts.
   ([#713](https://github.com/devswha/herdr-web-ui/pull/713) by @zerodice0, [#758](https://github.com/devswha/herdr-web-ui/pull/758))
+- Grok chat reads native messages and tool activity, respects logical rewinds and
+  refreshes expanded tool output. For now it works only with the native Grok build
+  `grok-1.0.50-linux-x86_64` on Linux; other builds, macOS and Windows show the terminal view.
+  See [setup and limits](docs/grok-chat.md).
+  ([#777](https://github.com/devswha/herdr-web-ui/pull/777) by @infowolfe)
 - Hermes's clarify questions get an answer card, as Claude Code's and Codex's do: one tap per
   choice, a typed answer for its "Other" row and for an open question, and ticks for a question
   that takes several answers. Text already on its answer line is cleared first, so it does not
