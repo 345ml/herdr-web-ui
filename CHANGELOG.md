@@ -22,8 +22,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   folder, and Back returns. Links made before (`?file=…`) still open the app with the viewer.
 - New workspace's recent folders leave out worktree checkouts (herdr's under `~/.herdr/worktrees`
   and the linked worktrees a PC has open) and temporary folders such as `/tmp`, and offer up to
-  eight folders instead of three on one row: a phone swipes it sideways; a wider screen shows as
-  many as the row holds, then a **+N** chip that lists the rest with their whole paths.
+  eight folders instead of three: a phone swipes them sideways on one row, a wider screen wraps them.
 - A pane's plan moved from the header into the background-task button by the message box: the
   button starts with **Plan** and how many steps are done (`2/5`), and opens one list with the
   plan's steps first and the background tasks below. The plan's flow of boxes, its dialog and the
@@ -66,6 +65,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - A PC window left in front while you used the terminal on a phone stayed at the phone's size
   when you came back, because it never lost the focus and so never took the pane back. A click
   or a key in its terminal now returns the pane to the PC's size. ([#839](https://github.com/devswha/herdr-web-ui/pull/839))
+- A refused answer on a question card (the question changed, or the answer no longer fits it) now
+  stays on the card as an error until the card is replaced, instead of a 2-second note that was easy
+  to miss, so the button no longer looks dead. `POST /api/pane/prompt/answer` logs each request
+  with the pane, whether the prompt id matched, and the outcome; never the answer.
+  ([#793](https://github.com/devswha/herdr-web-ui/pull/793))
 
 ## [0.4.7] - 2026-10-12
 
