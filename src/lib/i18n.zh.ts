@@ -23,6 +23,8 @@ export const ZH: Record<string, string> = {
   "{current} of {total}": "第 {current} 个，共 {total} 个",
   "Pane changed. Search again.": "窗格内容已更改，请重新搜索。",
   "Search moves the pane for every client.": "搜索会移动所有已连接客户端的窗格视图。",
+  "Recent folders": "最近的文件夹",
+  "Use folder {path}": "使用文件夹 {path}",
   "Dismiss": "关闭",
   "Waiting for terminal input…": "正在准备终端输入…",
   "Paused while you use another window": "使用其他窗口时已暂停",

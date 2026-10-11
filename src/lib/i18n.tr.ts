@@ -20,6 +20,8 @@ export const TR: Record<string, string> = {
   "{current} of {total}": "{current} / {total}",
   "Pane changed. Search again.": "Panelin içeriği değişti. Yeniden arayın.",
   "Search moves the pane for every client.": "Arama, bağlı tüm istemcilerde panelin kaydırma konumunu değiştirir.",
+  "Recent folders": "Son klasörler",
+  "Use folder {path}": "{path} klasörünü kullan",
   "Dismiss": "Kapat",
   "Waiting for terminal input…": "Terminal girdisi bekleniyor…",
   "Paused while you use another window": "Başka bir pencere kullanırken duraklatıldı",

@@ -95,6 +95,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   workspace read as one group. Rows in a card do not repeat the workspace on their second line;
   their tooltips still name it. A list in Activity order draws no cards, since it mixes workspaces.
   ([#673](https://github.com/devswha/herdr-web-ui/pull/673) by @WOULDU-pres, [#820](https://github.com/devswha/herdr-web-ui/pull/820))
+- New workspace offers the three most recent folders of the PC as chips on one row, kept after
+  workspaces close and the browser reloads. A chip puts its folder in Directory; a successful
+  start moves that folder to the front, ahead of folders a shell only passed through.
+  ([#652](https://github.com/devswha/herdr-web-ui/pull/652) by @od-studio-webagency, [#829](https://github.com/devswha/herdr-web-ui/pull/829))
 
 ### Fixed
 - Reloading with Settings open closes Settings whenever the browser gets to its step back; it could
