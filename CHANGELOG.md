@@ -34,6 +34,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - The reason a chat message did not go (Claude Code's terminal input box holds a draft, the PC
   needs an update, the send was not confirmed) is a band on the message box's top edge, as wide as
   the box, with **Clear it and send** at its end, instead of small red text under the box.
+- Serve built JavaScript and CSS as Brotli or gzip when accepted, preserving original bytes and static cache/CSP policy.
+  ([#787](https://github.com/devswha/herdr-web-ui/pull/787) by @kilhyeonjun)
 
 ### Fixed
 - The file viewer draws the HTML a README is written with (a centered logo, a row of badges and
