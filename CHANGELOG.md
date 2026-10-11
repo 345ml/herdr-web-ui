@@ -32,6 +32,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   `grok-1.0.50-linux-x86_64` on Linux; other builds, macOS and Windows show the terminal view.
   See [setup and limits](docs/grok-chat.md).
   ([#777](https://github.com/devswha/herdr-web-ui/pull/777) by @infowolfe)
+- **Experimental Antigravity chat** reads native messages and tool activity, follows the
+  running process’s active conversation, and honors saved rewind boundaries. macOS is untested.
+  See [compatibility and validation](docs/agy-chat.md).
+  ([#789](https://github.com/devswha/herdr-web-ui/pull/789) by @infowolfe)
 - Hermes's clarify questions get an answer card, as Claude Code's and Codex's do: one tap per
   choice, a typed answer for its "Other" row and for an open question, and ticks for a question
   that takes several answers. Text already on its answer line is cleared first, so it does not
@@ -71,6 +75,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#673](https://github.com/devswha/herdr-web-ui/pull/673) by @WOULDU-pres)
 
 ### Fixed
+- Chat hides a rejected conversation immediately, even when reading its terminal fallback
+  is slow or fails, so removed history does not remain on screen.
+  ([#789](https://github.com/devswha/herdr-web-ui/pull/789) by @infowolfe)
 - When a chat message is not sent because Claude Code's input box in the terminal is not empty,
   the note now says what the box holds, and a one-line draft there can be cleared from the chat
   with Clear it and send. The chat did not show that text, so Send seemed to do nothing until the

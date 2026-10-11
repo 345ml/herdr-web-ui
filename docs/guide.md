@@ -153,6 +153,7 @@ Every agent herdr runs shows up with its live status, terminal and alerts. The c
 | **Devin CLI** | Native SQLite session, showing the active branch when herdr or the live process explicitly identifies the session; otherwise terminal text | — use Terminal |
 | **Grok** | Linux native update log with exact process/session evidence, on the `grok-1.0.50-linux-x86_64` build only; other builds use Terminal. See [Grok setup and limits](grok-chat.md). | — use Terminal |
 | **Hermes** | Native SQLite session store | — use Terminal |
+| **Antigravity (agy)** | **Experimental; macOS untested.** Native ledger, selected by the running process’s held conversation lock. Linux native-tested; Windows uses terminal text. See [Agy behavior and limits](agy-chat.md). | — use Terminal |
 | **Anything else** | The terminal's text | — use Terminal |
 
 Devin sessions are never selected by directory or recency alone. A plain `devin` shows the
