@@ -29,6 +29,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   **Plan flow** and **Plan count in the header** settings are gone. ([#846](https://github.com/devswha/herdr-web-ui/pull/846))
 - Reuse immutable chat-message revisions across unrelated renders while retaining mutable-caller change detection.
   ([#788](https://github.com/devswha/herdr-web-ui/pull/788) by @kilhyeonjun)
+- The reason a chat message did not go (Claude Code's terminal input box holds a draft, the PC
+  needs an update, the send was not confirmed) is a band on the message box's top edge, as wide as
+  the box, with **Clear it and send** at its end, instead of small red text under the box.
 
 ### Fixed
 - The file viewer draws the HTML a README is written with (a centered logo, a row of badges and
