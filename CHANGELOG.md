@@ -35,6 +35,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Settings → Appearance → Colors offers **Forest**, a low-saturation green-grey palette for long
   sessions, in dark and light, with matching terminal and title-bar colors.
   ([#775](https://github.com/devswha/herdr-web-ui/pull/775) by @vibewriter-hand)
+- An OpenCode pane on a 1.x store (`session`/`message`/`part`) reads as a conversation again, where
+  the chat used to keep the terminal's text: prompts with the pictures pasted in them, each answer's
+  steps with their tool calls and outputs, and the turns an `/undo` took back.
+  ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
 - Chat updates follow native transcript changes pushed through the existing WebSocket.
