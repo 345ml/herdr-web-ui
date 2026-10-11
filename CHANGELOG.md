@@ -40,6 +40,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Settings → Appearance → Colors offers **Forest**, a low-saturation green-grey palette for long
   sessions, in dark and light, with matching terminal and title-bar colors.
   ([#775](https://github.com/devswha/herdr-web-ui/pull/775) by @vibewriter-hand)
+- A `mermaid` code block in the chat is drawn as a diagram, with a full-screen lightbox to zoom and
+  pan it, and the file viewer renders markdown files with local images; larger images are offered
+  as downloads. ([#616](https://github.com/devswha/herdr-web-ui/pull/616) by @lyonbot)
 - Pin agents to the top of the Agents list with the star beside each row; pins keep their order across reloads. ([#778](https://github.com/devswha/herdr-web-ui/pull/778) by @vibewriter-hand)
 - An OpenCode pane on a 1.x store (`session`/`message`/`part`) reads as a conversation again, where
   the chat used to keep the terminal's text: prompts with the pictures pasted in them, each answer's
