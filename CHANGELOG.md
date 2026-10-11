@@ -35,6 +35,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   menu asked for from the keyboard, still opens it.
 - With the system's reduce-motion setting on, a running agent's arc in the sidebar stood still,
   so RUN looked like BG (the same arc held still). It now fades in and out instead of turning. ([#841](https://github.com/devswha/herdr-web-ui/pull/841))
+- A phone showing one pane of a split tab no longer resizes the tab's other panes to its own
+  screen: they stay mounted behind the one shown and now keep the size the pty has, so a PC
+  drawing the split keeps its own sizes. A pane shown again on the phone takes its size then.
 
 ## [0.4.7] - 2026-10-12
 
