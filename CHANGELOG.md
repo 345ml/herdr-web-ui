@@ -20,6 +20,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   command palette, confirmations, the file list, the worktree dialog, Rename pane and the diagram
   lightbox. It used to open the pane before under the dialog, which stayed up. A wider screen keeps
   Back for the panes.
+- A phone brought back from sleep or the background reconnects as soon as the page is shown or the
+  network returns, instead of showing "reconnecting" for up to 5 seconds while the retry delay
+  grown during sleep ran out.
 - On a phone, the system Back button closes an open ⋯ menu sheet instead of switching to the pane
   opened before, which it did since 0.4.7 made each pane a history entry. A sheet closed by Cancel,
   a swipe or one of its items leaves no extra Back step behind.
