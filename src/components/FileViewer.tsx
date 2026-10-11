@@ -12,6 +12,7 @@ import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 import { MAX_INLINE_IMAGE_BYTES, markdownImagePreview } from "../lib/markdownImages.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+import { useSheetSwipe } from "../lib/sheets.ts";
 import { readFilePreviewText } from "../lib/filePreviewText.ts";
 
 /** Text shows its first part: the rest is a download away. */
@@ -49,6 +50,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const [textTotal, setTextTotal] = useState<number | undefined>(undefined);
   // Escape closes it, Tab stays in it, and the focus goes back to the row that opened it
   const surface = useFocusTrap<HTMLElement>(true);
+  useSheetSwipe(surface, onClose);
   useEffect(() => setPath(asked), [asked]);
 
   useEffect(() => {
