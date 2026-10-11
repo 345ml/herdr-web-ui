@@ -51,6 +51,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   A remote PC gets pushes once its bridge runs a bundle with this change. Approval-card polling
   remains independent.
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
+- The sidebar's Agents list puts each workspace's agents in a card under the workspace's name,
+  so agents working in the same workspace read as one group. The rows no longer repeat the
+  workspace on their second line; their tooltips still name it. A list in Activity order stays
+  as it was, since it mixes workspaces.
+  ([#673](https://github.com/devswha/herdr-web-ui/pull/673) by @WOULDU-pres)
 
 ### Fixed
 - When a chat message is not sent because Claude Code's input box in the terminal is not empty,
