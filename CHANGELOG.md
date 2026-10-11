@@ -87,6 +87,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   the card stays up with the cursor on its **Submit** row. A pick there used to untick the row
   instead of answering.
   ([#764](https://github.com/devswha/herdr-web-ui/pull/764))
+- An agent chat without a structured conversation no longer waits on hidden terminal output. Opening the terminal disclosure reads it independently; chat header/body reads have a 15-second deadline (30 seconds on a remote PC).
+  ([#791](https://github.com/devswha/herdr-web-ui/pull/791) by @kilhyeonjun)
 - Keep text file previews within their byte budget when a peer ignores Range, reject HTTP error bodies, and cancel stalled or closed previews.
   ([#785](https://github.com/devswha/herdr-web-ui/pull/785) by @kilhyeonjun)
 - A Claude `/model` list whose hint a narrow pane wraps inside a word or over more than six lines
