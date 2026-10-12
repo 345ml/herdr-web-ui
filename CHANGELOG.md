@@ -77,6 +77,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   to the start of the message in the order the files were picked, once a `/command` being typed or
   an IME composition is finished. It used to go where the caret
   was, so a path that arrived while you typed landed in the middle of your words and moved the caret.
+- One paste, pick or drop attaches up to 20 files instead of silently keeping the first four, and
+  the message box says how many it left out. **Settings → Chat → Files at once** sets the number
+  for the device, from 1 to 50.
 - Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
   ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
 - **Send now** on a working Codex pane sends the message at once. Codex kept it until its next
