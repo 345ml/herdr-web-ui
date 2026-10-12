@@ -6,10 +6,19 @@
  * braces keep their English names.
  */
 export const KO: Record<string, string> = {
+  "PageUp / PageDown scroll chat": "PageUp / PageDown으로 채팅 스크롤",
+  "Scroll the conversation even while typing. In the terminal, plain page keys stay with the running program.": "입력 중에도 대화를 스크롤합니다. 터미널에서는 일반 페이지 키가 실행 중인 프로그램에 전달됩니다.",
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravity 채팅을 사용할 수 없습니다. 터미널을 열어 작업 상태와 도구 호출을 확인하세요.",
   "Chat read timed out.": "대화 읽기 시간이 초과되었습니다.",
   "Thinking…": "생각 중…",
   "Grok chat is unavailable. Open Terminal to see activity and tool calls.": "Grok 채팅을 사용할 수 없습니다. 터미널을 열어 작업 상태와 도구 호출을 확인하세요.",
+  "Paging": "페이지 스크롤",
+  "Page overlap": "페이지 겹침 줄 수",
+  "Lines kept visible between pages in chat and terminal history. Zero scrolls a full page.": "채팅과 터미널 기록에서 페이지를 넘길 때 남겨 둘 줄 수입니다. 0이면 한 페이지 전체를 스크롤합니다.",
+  "Decrease page overlap": "페이지 겹침 줄 수 줄이기",
+  "Increase page overlap": "페이지 겹침 줄 수 늘리기",
+  "Scroll pane up": "패널 위로 스크롤",
+  "Scroll pane down": "패널 아래로 스크롤",
   "Find in terminal": "터미널에서 찾기",
   "Previous match": "이전 결과",
   "Next match": "다음 결과",
