@@ -39,11 +39,6 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   session clears both permissions and cached panes.
   ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
 
-### Fixed
-- Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
-  ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
-
-
 ### Changed
 - Markdown file previews are parsed in a worker with a 2 s budget and a 60 000-element limit,
   keeping the existing HTML blocks, images and reader-page navigation. A preview that cannot
@@ -51,6 +46,15 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   reported beside the file size with a warning icon and tooltip. **Open in a new tab**,
   **Open raw file** and **Download** retain their existing destinations without a duplicate Raw action.
   ([#429](https://github.com/devswha/herdr-web-ui/pull/429) by @aNNdii)
+- The sidebar's RUN mark is a working-colored dot that breathes, as T3 Code's does, instead of a
+  spinning arc that read as flicker beside the rows: it holds full most of a 2-second cycle and
+  dims to half in a few steps, and every running row breathes in step. BG is a still ring in the
+  same color, so the two read apart without motion; it breathes under reduced motion too.
+  ([#860](https://github.com/devswha/herdr-web-ui/pull/860))
+
+### Fixed
+- Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
+  ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
 
 ## [0.4.8] - 2026-10-12
 
