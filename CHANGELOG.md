@@ -8,6 +8,14 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Two tabs side by side** on a desktop, from different workspaces or PCs: drag a tab down out
+  of its strip, or a sidebar row over the pane area, and drop it on the left or right half. A guide
+  shows the two halves as soon as the drag starts and keeps its side steady at the centre; Escape
+  or a drop elsewhere leaves everything as it was. Each half draws its tab at herdr's own layout,
+  with its own tab strip and a bar with its lens and a close, and a tab is never shown in both
+  halves. A press in a half makes it the one the header, the palette and the shortcuts act on.
+  The split is kept across a reload, and a narrower window shows the active half alone. Drag
+  guide by @flam-ing. ([#861](https://github.com/devswha/herdr-web-ui/pull/861) by @Yoonwoo-Ha)
 - The file viewer and Markdown reader page offer **Show source**, highlighted source with
   CSS-counter line numbers, and **Copy file**, which selects the source when copying is unavailable.
   **Settings → Chat → File viewer** controls line wrapping and Markdown width; previews inherit
