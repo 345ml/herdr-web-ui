@@ -29,6 +29,14 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   so an agent's report with its screenshots draws whole. Files outside that folder, hidden ones such as `.env`,
   and anything of another kind than the tag asks for are never put in.
   ([#691](https://github.com/devswha/herdr-web-ui/pull/691) by @MovieHolic-Plex)
+- PCs saved in herdr appear automatically. Connect once per PC to enable automatic reconnection;
+  installing or starting a bridge still needs separate approval. Changing the address, port or
+  session clears both permissions and cached panes.
+  ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
+
+### Fixed
+- Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
+  ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
 
 
 ## [0.4.8] - 2026-10-12
