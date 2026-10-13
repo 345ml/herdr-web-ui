@@ -11,6 +11,7 @@ import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
 export interface TerminalInputProps {
   owner: string;
   active?: boolean;
+  /** an IME composition in the line: only the switch to direct typing waits for it */
   onComposing?: (active: boolean) => void;
   connected: boolean;
   /** true: sent, clear the line; a string: keep the text and say why; false: not sent (offline) */

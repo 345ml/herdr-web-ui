@@ -255,6 +255,11 @@ export function PaneTerminal({
   const composingRef = useRef(false);
   const [composing, setComposingState] = useState(false);
   const setComposing = useCallback((active: boolean) => { composingRef.current = active; setComposingState(active); }, []);
+  // a composition in the input line keeps the key bar live but blocks the switch to direct typing:
+  // unmounting the line mid-composition could drop the word or replay it into the pane
+  const lineComposingRef = useRef(false);
+  const [lineComposing, setLineComposingState] = useState(false);
+  const setLineComposing = useCallback((active: boolean) => { lineComposingRef.current = active; setLineComposingState(active); }, []);
   const compositionCommitPendingRef = useRef(false);
   const barKeyRef = useRef<{ key: string; chord: string | null } | null>(null);
   const modifiersRef = useRef<StickyModifiers>(NO_STICKY_MODIFIERS);
@@ -2070,7 +2075,7 @@ export function PaneTerminal({
   }, []);
 
   const toggleDirect = useCallback(() => {
-    if (composingRef.current) return;
+    if (composingRef.current || lineComposingRef.current) return;
     updateSettings({ terminalInputMode: directTyping ? "line" : "direct" });
   }, [directTyping, updateSettings]);
 
@@ -2663,12 +2668,12 @@ export function PaneTerminal({
           slot in the chat lens too (a box-less slot there, TerminalInput.css), so switching lenses
           keeps it mounted: a remount would drop what was typed and a send still on its way */}
       {((!chatView && lineSlot) || secretInput) && <div ref={setInputSlot} className={`terminal-input-slot${!chatView && lineSlot ? "" : " is-empty"}`}>
-        {secretInput ?? (!chatView && lineSlot && !secretActive && <TerminalInput key={paneId} active={active} owner={paneStorageId(machineId, paneId)} onComposing={setComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} />)}
+        {secretInput ?? (!chatView && lineSlot && !secretActive && <TerminalInput key={paneId} active={active} owner={paneStorageId(machineId, paneId)} onComposing={setLineComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} />)}
       </div>}
       {presented && paneId !== null && !secretActive && !observing && !chatView && <KeyBar disabled={composing || !connected || !inputReady || held || ended} onKey={pressKey}
         holdScope={`${paneStorageId(machineId, paneId)}:${view}`}
         modifiers={modifiers} onToggleModifier={toggleModifier} items={settings.keyBarItems}
-        {...(coarse ? { directTyping, onToggleDirect: toggleDirect } : {})} />}
+        {...(coarse ? { directTyping, onToggleDirect: toggleDirect, directDisabled: lineComposing } : {})} />}
     </div>
   );
 }
