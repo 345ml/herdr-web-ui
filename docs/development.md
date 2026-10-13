@@ -84,8 +84,8 @@ the test runner. A report is evidence, not an authorization to merge or publish.
 
 A local pass is not CI's: the PC has its own Node (CI pins 22), its own cores and its own system
 libraries. The browser lane uses the lockfile's Chromium, which it downloads into Playwright's
-cache on first use. `HERDR_TEST_SHARDS=4` runs four integration files at a time, as a way to
-look for timing failures; the default is one, as in CI.
+cache on first use. `HERDR_TEST_SHARDS=4` runs four integration files at a time, each with an
+isolated herdr session. Local checks and hosted CI default to one; self-hosted CI uses four.
 
 The single commands still work on their own:
 
@@ -331,7 +331,7 @@ the page and the data follows. The SoftwareApplication data is written in the pa
 The build also copies the retained `site/assets/` and `site/media/` files, including the film linked
 from the README and its chat loop. These remain available at their existing URLs even though the
 homepage uses the desktop and phone demos.
-`.github/workflows/pages.yml` installs ffmpeg and runs on pushes to `main` and manual dispatches from
+`.github/workflows/pages.yml` installs ffmpeg when the runner lacks it and runs on pushes to `main` and manual dispatches from
 `main`. Reusable CI validation and the site build run in parallel against the same triggering SHA,
 and deployment requires both to succeed. Deployments are serialized. Immediately before deploying,
 the workflow checks that the validated SHA is still the latest `main` commit; it fails closed if it is
@@ -434,13 +434,19 @@ The [CI workflow](../.github/workflows/ci.yml) runs on every PR and `main` push:
   - **Integration tests** runs `bun run check integration`: a build and
     `bun run test:integration` on a herdr of the run's own ([Checks](#checks)). The
     integration files can run a few at a time, each worker on a herdr session of its own
-    (`scripts/ci-tests.ts`); they run one by one (`HERDR_TEST_SHARDS`, default 1 in
-    `scripts/check.ts`) until the timing-bound contract tests hold under load.
+    (`scripts/ci-tests.ts`); hosted CI runs one by one, while self-hosted CI sets
+    `HERDR_TEST_SHARDS=4`. `scripts/check.ts` still defaults to one for local checks.
     Missing herdr fails the run. Its herdr servers are stopped even on failure.
     Integration tests have a 15-second default timeout so their bounded process-startup
     probes can finish; individual tests can still specify a longer timeout.
-  - **Browser regression (ui-regression)** runs `scripts/ui-regression.ts` alone.
-  - **Browser regression (other scripts)** runs every other browser script, four at a time.
+  - **Browser regression (ui-regression)** runs `scripts/ui-regression.ts` and
+    `scripts/ui-contexts-regression.ts` concurrently. The core's stateful flow stays serial;
+    the extracted feature checks own a separate temporary herdr config/session, Chromium
+    process, server and fixture panes. Those helpers stay sequential within their own fixture.
+    The context suite prints each helper's elapsed time and stops its owned daemon on exit.
+    `bun run test:ui` also runs both suites.
+  - **Browser regression (other scripts)** runs every other browser script, four at a time
+    on hosted CI and six at a time on self-hosted CI.
 
   Both browser jobs run `scripts/ci-browser-parallel.ts`, which takes its script list from
   `scripts/ci-browser.sh` (`BROWSER_SCRIPTS` picks from it, `BROWSER_EXCLUDE` leaves scripts out,
@@ -472,6 +478,50 @@ automatically covered. Evidence failures never replace the original test failure
 CI uploads nested failure artifacts alongside herdr's `test-server.log`; reports and command
 logs are retained for successful runs too. All captures use isolated fixtures, never live-user
 pages or credentials.
+
+### Self-hosted runner
+
+Linux CI/CD jobs run on GitHub-hosted `ubuntu-24.04` unless the repository variable
+`CI_SELF_HOSTED_LABELS` holds a JSON array of runner labels that contains `"self-hosted"`, for
+example `["self-hosted","linux","x64","herdr-ci"]`. Set, it routes:
+
+- in `ci.yml`: Fast checks, Integration tests and both Browser regression jobs;
+- in `pages.yml`: the site build and the deploy;
+- in `release.yml`: the preflight and publish jobs.
+
+Detect changes, the Integration and browser summary, the Windows and macOS jobs,
+`remote-bundles.yml` and `windows-install.yml` always stay GitHub-hosted.
+
+In `ci.yml`, Detect changes picks the runner with `scripts/ci-runner-route.sh`. A fork pull request
+always gets `ubuntu-24.04`, whatever the variable says. Otherwise the `self_hosted_labels`
+workflow_dispatch input, when not empty, overrides the variable for that one manual run. A value
+that is not a non-empty array of strings containing `"self-hosted"` fails the job instead of
+falling back. `pages.yml` and `release.yml` read the variable directly.
+
+Only a `pull_request` may skip the heavy jobs as docs-only, and only when every changed file is
+under `docs/`, ends in `.md` or `.txt`, is the root `LICENSE` or sits under
+`.github/ISSUE_TEMPLATE/`. Pushes, dispatches and runs called from `release.yml` or `pages.yml`
+always validate in full.
+
+The runner is an ephemeral Docker container that runs one job and exits. Containers have no CPU
+quota or total-memory limit; concurrent slots share the host's available resources. Its image ships Bun,
+Node 22, checksum-pinned herdr, Playwright Chromium and its system libraries, ffmpeg, git, the
+checksum-pinned GitHub CLI (`gh`) for deployment and release publishing, curl, jq, unzip,
+xz-utils and CA certificates, with no sudo. Self-hosted setup verifies the prepared tools and
+fails on a stale image instead of downloading replacements. Rebuild the image after changing
+its pins; its Bun pin must match `.github/actions/setup-ci/action.yml`, and its Playwright pin
+must match `bun.lock`.
+
+The composite setup action used by `ci.yml`, `pages.yml` and `release.yml` keeps Bun's dependency
+cache in `.ci-cache/bun`. Only GitHub-hosted jobs restore/save that cache remotely: on the measured
+self-hosted connection, downloading the archive took longer than a fresh dependency install.
+Self-hosted jobs install directly from the lockfile without transferring a remote dependency cache.
+Hosted browsers use
+`.ci-cache/playwright`; self-hosted browsers come from the image. Neither cache restores a
+home-directory archive across different workspace depths. Tool/browser preparation no longer
+downloads on self-hosted jobs, but dependency installation, checkout and artifact transfers still
+do; measure setup, test execution and retries separately when comparing speed. Setup, routing and the security model are in
+[scripts/self-hosted-runner/README.md](../scripts/self-hosted-runner/README.md).
 
 `scripts/ci-tests.ts` discovers all `.test.ts` files under src/shared/server/scripts.
 Files named `*.contract.test.ts`, tests under `server/herdr/` and `server/pty/`, and
