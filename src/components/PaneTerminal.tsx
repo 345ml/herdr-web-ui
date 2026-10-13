@@ -1178,7 +1178,12 @@ export function PaneTerminal({
     });
     session.connect();
 
-    const poll = window.setInterval(() => { setConnected(socket.connected); setConversationPushes(socket.conversationPushes()); }, 1000);
+    // input readiness too: a liveness probe refuses input without a frame to say so
+    const poll = window.setInterval(() => {
+      setConnected(socket.connected);
+      setConversationPushes(socket.conversationPushes());
+      if (paneRef.current) setInputReady(socket.canInput(paneRef.current));
+    }, 1000);
 
     // onKey runs after xterm drains a pending IME commit, immediately before the
     // key's onData. Remap only that CR, preserving composition text and its order.
@@ -2062,6 +2067,8 @@ export function PaneTerminal({
     const session = sessionRef.current;
     const pane = paneRef.current;
     if (!term || !socket || !session || pane === null || secretRef.current !== null || heldRef.current) return null;
+    // its Enter would run the pty's line without the start a held draft keeps
+    if (draftHeldForRef.current === pane) return Promise.resolve({ ok: false, code: "held_input", message: "send or discard the held input first" });
     // not the scope itself: a message sent right after a reconnect leaves before the snapshot that names it
     const epoch = session.epoch;
     const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), false, delivery, clearDraft);
@@ -2350,6 +2357,13 @@ export function PaneTerminal({
     if (!message || message.state === "sending") return;
     if (action === "steer" && (message.state === "uncertain" || !socket?.connected || heldRef.current || secretRef.current !== null || observeRef.current || ended || heldByOpenQueue || answering !== null)) return;
     if (message.serverOwned && !pendingMessages.isOwned(owner, id, scope)) return;
+    // keys held back in the terminal draft would run in front of the message: the server pastes a
+    // server-owned row's text and sends Enter without looking for a partial line (only Claude's box
+    // is checked there). The row stays as it is, so Send now after the draft is settled, or Discard, still works.
+    if (action === "steer" && draftHeldForRef.current === pane) {
+      pendingMessages.fail(owner, id, { code: "held_input", message: "send or discard the held input first" }, false);
+      return;
+    }
     if (!pendingMessages.begin(owner, id)) return;
     try {
       if (message.serverOwned) {
