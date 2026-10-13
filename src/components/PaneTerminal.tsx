@@ -2320,6 +2320,35 @@ export function PaneTerminal({
     return () => { if (controls.current === current) controls.current = null; };
   }, [controls, active, paneId]);
 
+  const secretInput = presented && paneId !== null && secretActive && !observing && !ended && connected && outputReady ? <SecretInput
+    key={`${paneId}:${secret.prompt}`} prompt={secret.prompt} active={active}
+    onSend={(value) => socketRef.current?.sendSecret(paneId, secret.prompt, value) ?? null}
+    onCancel={() => { if (socketRef.current?.connected) socketRef.current.sendInput(paneId, "\u0003"); }}
+  /> : null;
+  // the input line's row, kept while the masked input stands in for it
+  const lineSlot = presented && paneId !== null && !observing && !ended && inputLine;
+  // What floats from the slot may reach up to the grid's top and no further (TerminalInput.css):
+  // in a short pane (a split, a phone in landscape with its keyboard up) a grown line or the masked
+  // input would otherwise cover the find bar, or be clipped under the pane's frame
+  const [inputSlot, setInputSlot] = useState<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const surface = stackRef.current?.querySelector(".terminal-surface");
+    if (!stackRef.current || !surface || !inputSlot) return;
+    const measure = () => {
+      const slot = inputSlot.getBoundingClientRect();
+      // the chat lens's box-less slot has no rect, and nothing floats there to cap
+      if (slot.width === 0) return;
+      const room = slot.bottom - surface.getBoundingClientRect().top;
+      inputSlot.style.setProperty("--terminal-input-room", `${Math.max(0, Math.floor(room))}px`);
+    };
+    measure();
+    // the surface moves with the find bar and resizes with the stack and the key bar under it
+    const observer = new ResizeObserver(measure);
+    observer.observe(stackRef.current);
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, [inputSlot]);
+
   return (
     // data-direct-typing: xterm's own field raises the soft keyboard here (lib/viewport.ts)
     <div ref={stackRef} className={`terminal-stack${chatView ? " is-chat" : ""}${greeted ? " is-greeted" : ""}`} data-pane-owner={paneId === null ? undefined : paneStorageId(machineId, paneId)} data-direct-typing={coarse && directTyping && !chatView ? "" : undefined}>
@@ -2568,11 +2597,6 @@ export function PaneTerminal({
       {presented && paneId !== null && chatView && <div className="prompt-dock" ref={setPromptDock} aria-live="polite" />}
       {/* the composer belongs to the chat lens: in terminal mode the grid itself is
           the input surface (key bar included), so a second box would only duplicate it */}
-      {presented && paneId !== null && secretActive && !observing && !ended && connected && outputReady && <SecretInput
-        key={`${paneId}:${secret.prompt}`} prompt={secret.prompt} active={active}
-        onSend={(value) => socketRef.current?.sendSecret(paneId, secret.prompt, value) ?? null}
-        onCancel={() => { if (socketRef.current?.connected) socketRef.current.sendInput(paneId, "\u0003"); }}
-      />}
       {presented && paneId !== null && chatView && !secretActive && !observing && !ended && (
         <Composer
           key={paneId}
@@ -2605,7 +2629,15 @@ export function PaneTerminal({
           onUploadImage={uploadImage}
         />
       )}
-      {presented && paneId !== null && !secretActive && !observing && !ended && inputLine && <TerminalInput key={paneId} active={active} owner={paneStorageId(machineId, paneId)} onComposing={setComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} />}
+      {/* In the terminal lens the input line and the masked input float over the grid's last rows
+          from a slot that keeps one row's height in flow: a line that grows while it is typed, a
+          note under it or the masked input taking its place would otherwise take rows from the
+          grid, and each change of its height resizes the shared pty. The masked input sits in this
+          slot in the chat lens too (a box-less slot there, TerminalInput.css), so switching lenses
+          keeps it mounted: a remount would drop what was typed and a send still on its way */}
+      {((!chatView && lineSlot) || secretInput) && <div ref={setInputSlot} className={`terminal-input-slot${!chatView && lineSlot ? "" : " is-empty"}`}>
+        {secretInput ?? (!chatView && lineSlot && !secretActive && <TerminalInput key={paneId} active={active} owner={paneStorageId(machineId, paneId)} onComposing={setComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} />)}
+      </div>}
       {presented && paneId !== null && !secretActive && !observing && !chatView && <KeyBar disabled={composing || !connected || !inputReady || held || ended} onKey={pressKey}
         holdScope={`${paneStorageId(machineId, paneId)}:${view}`}
         modifiers={modifiers} onToggleModifier={toggleModifier} items={settings.keyBarItems}
