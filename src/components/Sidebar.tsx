@@ -14,7 +14,7 @@ import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { WorktreeDialog, type WorktreeDialogMode } from "./WorktreeDialog.tsx";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
-import { folderName, shortPathTitle, taskRowLines } from "../lib/paneName.ts";
+import { folderName, shortPathTitle, stripPaneChrome, taskRowLines } from "../lib/paneName.ts";
 import { useT } from "../lib/i18n.ts";
 import { rosterPanes } from "../lib/dagPane.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
@@ -37,16 +37,6 @@ function storedWorktreeCollapsed(machineId: string, repoKeys: string[]): Set<str
   return collapsed;
 }
 
-/** shell prompt titles: `user@host:` is chrome, the path after it is the information */
-const SHELL_PREFIX = /^[^:@\s]+@[^:@\s]+:/;
-/** Herdr's agent glyph and spinner are already represented by the row mark and badge. */
-const AGENT_CHROME = /^π\s*[^\p{L}\p{N}\s]?\s*/u;
-
-function stripPaneChrome(title: string, agent: string | null | undefined): string {
-  const shellStripped = title.replace(SHELL_PREFIX, "");
-  return agent ? shellStripped.replace(AGENT_CHROME, "") : shellStripped;
-}
-
 export { paneTitle };
 
 /**
@@ -55,6 +45,14 @@ export { paneTitle };
  */
 export function displayPaneTitle(pane: PaneInfo): string {
   return pane.label?.trim() || shortPathTitle(stripPaneChrome(paneTitle(pane), pane.agent)) || pane.pane_id;
+}
+
+/**
+ * The title an alert names a pane by: as a row's, with the folder Codex adds after its thread
+ * kept. A notification is read away from the row that says where the pane is.
+ */
+export function alertPaneTitle(pane: PaneInfo): string {
+  return pane.label?.trim() || shortPathTitle(stripPaneChrome(paneTitle(pane), pane.agent, true)) || pane.pane_id;
 }
 
 /** herdr could not bring this pane back after a restart (0.9.3+ `restore_error`): a warning in the status cell, its reason on hover. */
