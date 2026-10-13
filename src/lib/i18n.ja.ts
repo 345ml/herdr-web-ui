@@ -894,6 +894,8 @@ export const JA: Record<string, string> = {
   "Terminal input line": "ターミナル入力行",
   "Press Enter in the terminal": "ターミナルで Enter を押す",
   "Send to the terminal": "ターミナルに送信",
+  "Finishing the word…": "単語を確定しています…",
+  "Finish the word, then send.": "単語を確定してから送信してください。",
   "Not sent: the terminal is disconnected.": "未送信: ターミナルが切断されています。",
   "Not sent: the terminal is not ready for keys.": "未送信: ターミナルはまだキー入力を受け付けていません。",
   "Not sent: send or discard the held input first.": "未送信: 先に保持した入力を送信するか破棄してください。",
