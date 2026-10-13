@@ -349,6 +349,11 @@ export function PaneTerminal({
     setDraftState((previous) => ({ owner, value: typeof value === "function" ? value(previous.owner === owner ? previous.value : EMPTY_DRAFT) : value }));
   }, [machineId]);
   const draftPaneRef = useRef<string | null>(null);
+  // The pane whose held draft takes all later typing until Send or Discard: keys sent beside it would
+  // reach the pty without the start the draft holds (`echo ` held, `rm -rf build` and Enter typed).
+  // Set here on each render, and at once by onData when it holds a key, before that render comes.
+  const draftHeldForRef = useRef<string | null>(null);
+  draftHeldForRef.current = paneId !== null && draftState.owner === paneStorageId(machineId, paneId) && !draftIsEmpty(draft) ? paneId : null;
   useEffect(() => {
     if (!paneId || draftState.owner !== paneStorageId(machineId, paneId)) return;
     const key = `herdr-web-ui:terminal-draft:${draftState.owner}`;
@@ -1215,7 +1220,10 @@ export function PaneTerminal({
       barKeyRef.current = null;
       const physicalChord = typedChord;
       typedChord = null;
-      if (enterAs !== null && data === "\r") data = enterAs;
+      // a modified Enter (Shift+Enter's newline, Ctrl+Enter's "send now") is decided on before its
+      // rewrite: its sequence may carry no line break at all
+      const modifiedEnter = enterAs !== null && data === "\r";
+      if (modifiedEnter) data = enterAs!;
       enterAs = null;
       if (commandBackspace && data === "\x7f") data = "\x15";
       commandBackspace = false;
@@ -1227,6 +1235,25 @@ export function PaneTerminal({
         ? barKey !== null ? barKey.chord
           : physicalChord ?? (hasModifiers(modifiersRef.current) && key !== null ? terminalChord(key, modifiersRef.current) : null)
         : null;
+      if (draftHeldForRef.current === current) {
+        // A chord or a modified Enter is never held, and never sent beside held text either
+        // (Ctrl+J, or Ctrl+Enter under modifyOtherKeys, would run the line).
+        // A paste the draft cannot take (an unbracketed tab or control character) is refused too, never sent
+        // ahead of the held start.
+        const pasted = pasting || input.startsWith("\x1b[200~");
+        if (chord !== null || modifiedEnter || (pasted && applyToDraft(EMPTY_DRAFT, input) === EMPTY_DRAFT)) {
+          const t = tRef.current;
+          setInputError(t("Not sent: send or discard the held input first."));
+          return;
+        }
+        // Text, a paste, Backspace and anything with a line break go to the draft, which leaves
+        // Enter out, so a partial command never runs. Other control keys (Ctrl+C, Escape, Tab,
+        // arrows) still reach the program below: an interrupt must not wait on the draft.
+        if (pasted || /[\r\n\x7f\b]/.test(input) || applyToDraft(EMPTY_DRAFT, input) !== EMPTY_DRAFT) {
+          setDraft((prev) => applyToDraft(prev, input));
+          return;
+        }
+      }
       // Herdr, rather than xterm's legacy encoder, preserves all modifier bits
       // in the keyboard protocol requested by the program in this pane.
       // herdr's attach stream never tells xterm that the program asked for application cursor
@@ -1253,6 +1280,7 @@ export function PaneTerminal({
         setDraft(EMPTY_DRAFT);
       }
       setDraft((prev) => applyToDraft(prev, input));
+      if (!draftIsEmpty(applyToDraft(EMPTY_DRAFT, input))) draftHeldForRef.current = current;
     });
 
     // Browsers expose dropped files as bytes, not local paths. Save them beside
@@ -2064,6 +2092,8 @@ export function PaneTerminal({
     const socket = socketRef.current;
     const pane = paneRef.current;
     if (!term || !socket || pane === null || secretRef.current !== null) return false;
+    // its text and Enter would land beside the held draft: Send or Discard that first
+    if (draftHeldForRef.current === pane) return Promise.resolve(tRef.current("Not sent: send or discard the held input first."));
     const message = composerMessage(text);
     const payload = message.includes("\n") ? composerPayload(text, term.modes.bracketedPasteMode) : message;
     reassertIfStaleRef.current();
@@ -2080,10 +2110,12 @@ export function PaneTerminal({
   // a tap into the input line is the user here: the grid is theirs again before they type
   const reassertGrid = useCallback(() => { reassertIfStaleRef.current(); }, []);
 
-  const pressEnter = useCallback((): boolean => {
+  const pressEnter = useCallback((): boolean | string => {
     const socket = socketRef.current;
     const pane = paneRef.current;
     if (!socket || pane === null || !socket.connected) return false;
+    // Enter beside a held draft would run the pty's line without the held start
+    if (draftHeldForRef.current === pane) return tRef.current("Not sent: send or discard the held input first.");
     reassertIfStaleRef.current();
     const sent = hasModifiers(modifiersRef.current)
       ? socket.sendKeys(pane, [terminalChord("Enter", modifiersRef.current)!]) : socket.sendInput(pane, "\r");
