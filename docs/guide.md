@@ -147,7 +147,7 @@ Every agent herdr runs shows up with its live status, terminal and alerts. The c
 | **Codex** | Native rollout, with tool results and commentary/final phases | ✓ approvals and questions, including queued ones, and the `/model` lists (picked for the session) |
 | **omp** | Native session file | ✓ |
 | **omo** | Native session file, found through the pane's process tree | — use Terminal |
-| **gjc** | Native session file, from the session directory gjc keeps open | — use Terminal |
+| **gjc** | Native session file identified by GJC's SDK broker and the pane's process | — use Terminal |
 | **pi** | Native session file, resolved through herdr; after `/tree`, the branch in play | ✓ its dialogs: a question, a confirmation, an answer typed in |
 | **OpenCode** | Native session in OpenCode 2's own database, resolved through herdr: `~/.local/share/opencode/opencode.db` (`%USERPROFILE%\.local\share\opencode\opencode.db` on Windows), or where the server's `XDG_DATA_HOME` or `OPENCODE_DB` puts it | — use Terminal |
 | **Devin CLI** | Native SQLite session, showing the active branch when herdr or the live process explicitly identifies the session; otherwise terminal text | — use Terminal |
@@ -155,6 +155,14 @@ Every agent herdr runs shows up with its live status, terminal and alerts. The c
 | **Hermes** | Native SQLite session store | — use Terminal |
 | **Antigravity (agy)** | **Experimental; macOS untested.** Native ledger, selected by the running process’s held conversation lock. Linux native-tested; Windows uses terminal text. See [Agy behavior and limits](agy-chat.md). | — use Terminal |
 | **Anything else** | The terminal's text | — use Terminal |
+
+GJC chat requires GJC 0.18.9 or later for its broker-bound SDK session CLI, with `gjc`
+on the server PC's PATH and its SDK broker already running. An older GJC opens in Terminal.
+Git must also be on PATH for the SDK's workspace-scope discovery.
+The bridge asks the broker which saved session belongs to the pane's GJC process;
+it does not start a broker or guess from the screen, session title or newest file.
+Missing, ambiguous or unreadable SDK identity uses Terminal instead. Terminal input,
+status tracking and prompt handling are unchanged.
 
 Devin sessions are never selected by directory or recency alone. A plain `devin` shows the
 terminal text, since herdr does not report its session without its Devin integration; a session
