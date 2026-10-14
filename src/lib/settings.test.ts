@@ -88,6 +88,10 @@ describe("telemetry settings snapshot", () => {
       voiceLanguage: "ko-KR",
       wrapCode: true,
       markdownWidth: "full",
+      paletteLight: "charcoal",
+      paletteDark: "amber",
+      uiFontSize: 18,
+      diffStyle: "split",
     });
     const snapshot = telemetrySettingsSnapshot(settings);
 
@@ -101,8 +105,6 @@ describe("telemetry settings snapshot", () => {
       agentMarks: "mono",
       palette: "catppuccin",
       terminalFontSize: 22,
-      terminalCursorStyle: "block",
-      terminalCursorBlink: true,
       terminalWheelSpeed: 10,
       chatFontSize: 11,
       chatWidth: "wide",
@@ -116,6 +118,10 @@ describe("telemetry settings snapshot", () => {
       voiceLanguage: "ko-KR",
       wrapCode: true,
       markdownWidth: "full",
+      paletteLight: "charcoal",
+      paletteDark: "amber",
+      uiFontSize: 18,
+      diffStyle: "split",
     });
     expect(telemetrySettings(snapshot)).toEqual(snapshot);
     expect(telemetrySettingsSnapshot(DEFAULT_SETTINGS)).toMatchObject({
@@ -126,6 +132,7 @@ describe("telemetry settings snapshot", () => {
       quickRepliesCustom: false,
       quickReplyCount: DEFAULT_SETTINGS.quickReplies.length,
       usageHiddenCount: 0,
+      usageOrderCustom: false,
     });
   });
 
@@ -151,6 +158,7 @@ describe("telemetry settings snapshot", () => {
       quickRepliesCustom: true,
       quickReplyCount: 1,
       usageHiddenCount: 1,
+      usageOrderCustom: true,
     });
     for (const key of ["keyBarExtras", "keyBarItems", "shortcutOverrides", "terminalFontFamily", "chatFontFamily", "quickReplies", "usageOrder", "usageHidden"]) {
       expect(snapshot).not.toHaveProperty(key);
