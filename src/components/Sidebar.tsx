@@ -297,10 +297,9 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const pinnedIds = useMemo(() => pinnedWorkspaceIds(pins, machineId), [pins, machineId]);
   const shownGroups = useMemo(() => splitPinnedGroups(worktreeGroups, pinnedIds, (workspace) => workspace.workspace_id), [worktreeGroups, pinnedIds]);
-  const movableGroups = shownGroups.rest;
-  // a pinned repository's worktrees move with it, never independently inside the card
-  const pinnedRows = useMemo(() => pinnedGroupIds(shownGroups.pinned, (workspace) => workspace.workspace_id), [shownGroups]);
-  const fixedIds = useMemo(() => new Set([...pinnedRows].filter((id) => !pinnedIds.includes(id))), [pinnedRows, pinnedIds]);
+  // a pinned head's worktrees remain outside the card, but cannot move away from their repository
+  const fixedIds = useMemo(() => new Set([...pinnedGroupIds(worktreeGroups, pinnedIds, (workspace) => workspace.workspace_id)].filter((id) => !pinnedIds.includes(id))), [worktreeGroups, pinnedIds]);
+  const movableGroups = shownGroups.rest.filter((group) => !fixedIds.has(group.workspace.workspace_id));
   // a pin moves the row to the other list, so React draws it anew: the row that had the focus gets it back
   const refocusRow = useRef<string | null>(null);
   useLayoutEffect(() => {

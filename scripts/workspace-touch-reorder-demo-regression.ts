@@ -61,6 +61,8 @@ async function checkPinned(page: Page, cdp?: CDPSession): Promise<void> {
     await page.getByRole(cdp ? "button" : "menuitem", { name: "Pin workspace", exact: true }).click();
   }
   assert.deepEqual(await pinnedRows(page), ids);
+  const restRows = () => page.locator(".machine-workspaces .sidebar-list > .workspace-list:not(.workspace-list-pinned) > .workspace-group").evaluateAll((rows) => rows.map((row) => (row as HTMLElement).dataset.workspace));
+  const restBefore = await restRows();
   const drag = async (source: string, target: string) => {
     if (cdp) await stroke(page, cdp, await centerOf(page, source), await centerOf(page, target), 1);
     else await row(source).dragTo(row(target));
@@ -68,15 +70,28 @@ async function checkPinned(page: Page, cdp?: CDPSession): Promise<void> {
   await drag(ids[0]!, ids[1]!);
   const expected = [ids[1], ids[0]];
   assert.deepEqual(await pinnedRows(page), expected, "drag changes the pinned card order");
-  const childGroup = page.locator(`.workspace-list-pinned > .workspace-group[data-workspace="${ids[0]}"] + .worktree-children`);
-  assert.equal(await childGroup.locator(`.workspace-group[data-workspace="${child}"]`).count(), 1, "the pinned repository carries its worktree group to the new position");
-  assert.equal(await childGroup.locator(".workspace-select[draggable=true]").count(), 0, "pinned children cannot be moved independently");
+  assert.equal(await page.locator(".workspace-list-pinned .worktree-children").count(), 0, "pinned repository rows do not carry their worktrees into the card");
+  const childRow = row(child);
+  assert.equal(await childRow.evaluate((element) => element.closest(".sidebar-pinned, .worktree-children") === null), true, "the unpinned worktree stands alone outside the card");
+  assert.equal(await childRow.getAttribute("draggable"), "false", "the unpinned worktree stays fixed");
+  assert.deepEqual(await restRows(), restBefore, "reordering the pinned repository leaves its worktree at the original rest-list position");
+  await row(ids[0]!).focus();
+  await page.keyboard.press("Alt+ArrowUp");
+  assert.deepEqual(await pinnedRows(page), ids, "Alt+Up reorders pinned rows within the card");
+  await page.keyboard.press("Alt+ArrowDown");
+  assert.deepEqual(await pinnedRows(page), expected, "Alt+Down restores the pinned order");
+  await childRow.focus();
+  await page.keyboard.press("Alt+ArrowDown");
+  assert.deepEqual(await restRows(), restBefore, "Alt+Down cannot move the repository's unpinned worktree");
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]") as string[]);
   assert.deepEqual(stored.filter((key) => key.includes(":workspace:")).map((key) => key.split(":workspace:")[1]), expected, "the pin list holds the new order");
   const unpinned = before[2]!;
   await drag(ids[0]!, unpinned);
   await drag(unpinned, ids[0]!);
   assert.deepEqual(await pinnedRows(page), expected, "neither direction crosses the pin boundary");
+  await drag(ids[0]!, child);
+  assert.deepEqual(await pinnedRows(page), expected, "dropping onto the repository's own worktree cannot cross the card edge");
+  assert.deepEqual(await restRows(), restBefore, "cross-card drops leave the rest list unchanged");
   assert.deepEqual(await serverOrder(page), serverBefore, "pinned drags never move herdr workspaces");
   await page.screenshot({ path: `/tmp/pinned-reorder-${cdp ? "phone" : "desktop"}.png` });
   await page.reload();
@@ -85,7 +100,7 @@ async function checkPinned(page: Page, cdp?: CDPSession): Promise<void> {
   if (cdp && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
   await page.locator(".workspace-list-pinned").waitFor();
   assert.deepEqual(await pinnedRows(page), expected, "pin order survives reload");
-  console.log(`PASS ${cdp ? "touch long press" : "desktop drag"} reorders saved pins within the card, preserves herdr order and survives reload`);
+  console.log(`PASS ${cdp ? "touch long press" : "desktop drag"} and Alt+Up/Down reorder saved pins within the card, keep unpinned worktrees fixed outside, preserve herdr order and survive reload`);
 }
 
 try {

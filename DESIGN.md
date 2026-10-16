@@ -654,11 +654,13 @@ One set for both themes: the card is island black wherever it shows.
 - A workspace is pinned from its row menu (**Pin workspace** / **Unpin workspace**, first in the
   menu), as Paseo pins a chat: pinned workspaces leave their place and stand first in their PC's
   list, in the order they were pinned, in the Agents list's card (`.sidebar-pinned`), with no mark
-  of their own either. A pinned repository's workspace brings its worktrees; a pinned
-  worktree leaves its repository's group, which stays. Dragging, touch long-press and `Alt+↑/↓`
-  reorder pinned groups inside their card by changing pin order, not herdr's workspace order.
-  Their children stay with the pinned parent. Neither list accepts a drop from the other;
-  the rest reorder among the rows they show. The pins are the Agents list's
+  of their own either. A pinned repository's workspace stands alone in the card; its unpinned
+  worktrees stay as standalone rows at the group's position, in their order. They are not dragged
+  or moved away from their repository; unpinning the head restores the group. A pinned worktree
+  leaves its repository's group, which stays. Dragging, touch long-press and `Alt+↑/↓` reorder
+  pinned rows inside their card by changing pin order, not herdr's workspace order or the position
+  of their unpinned worktrees. Neither list accepts a drop from the other; the rest reorder
+  through herdr among their movable rows. The pins are the Agents list's
   shared list (a workspace's key is `machine:workspace:id`), so other browsers of the server see them.
 - A title that is a working directory written out (`/home/me/dev/api`, `~/dev/api`, `C:\work\api`)
   shows as its last folder, here, in the header, the palette and every alert; the full path stays
