@@ -274,6 +274,11 @@ export class OmoStatus {
     return this.panes.get(paneId)?.background ?? 0;
   }
 
+  /** The native session already resolved for this pane; no new process or file lookup. */
+  pathOf(paneId: string): string | null {
+    return this.panes.get(paneId)?.path ?? null;
+  }
+
   /** The folder and session id of the OmO session the pane holds, once its file is known. */
   sessionOf(paneId: string): { cwd: string; sessionId: string } | null {
     const tracked = this.panes.get(paneId);
