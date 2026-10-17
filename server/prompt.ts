@@ -10,8 +10,11 @@ import { claudePlanFile } from "./claude-plan.ts";
 
 const ANSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const SELECTED_RE = /^[❯›>]\s*/;
+const OMP_OPTION_MARKER_RE = /^([ \t]*)(?:[❯›>]\s*)?([○●◉◯☐☑☒✓])/;
 const DIVIDER_RE = /^[\s╭╮╰╯├┤┬┴┼─━═╌▔]+$/;
 const OMP_SINGLE_HINT_RE = /(?:enter|⏎)\s+select.*↑\/↓\s*move.*(?:esc|⎋)\s*cancel/i;
+// A legacy single-question footer can clip after the Tab keys or inside the cancel label.
+const OMP_SINGLE_CLIPPED_HINT_RE = /enter select.*n note.*↑\/↓ move.*(?:tab\/←\/→|esc(?: c(?:a(?:n(?:c(?:e(?:l)?)?)?)?)?)?)(?:…|\.{3})$/i;
 // A narrow footer can cut the question-navigation word at any letter, followed by an ellipsis.
 const OMP_CLIPPED_SINGLE_HINT_RE = /(?:enter|⏎)\s+select.*\bn\s+note.*↑\/↓\s*move.*(?:tab|⇥).*\b(?:question…?|(?:q|qu|que|ques|quest|questi|questio)…)(?=\s|$)/i;
 const OMP_MULTI_HINT_RE = /(?:space\/enter toggle|(?:space|␠|␣)\s+toggle.*(?:enter|⏎)\s+(?:submit|next)).*↑\/↓\s*move.*(?:esc|⎋)\s*cancel/i;
@@ -325,6 +328,21 @@ function parseOmpSubmit(screen: string): ParsedPrompt | null {
   });
 }
 
+/** A clipped legacy footer is enough to identify a menu only when every parsed row
+ * starts with an option marker in the cursor row's physical column. */
+function ompRowsHaveAlignedMarkers(lines: string[], rows: MenuRow[]): boolean {
+  const markerColumn = (lineIndex: number): number | null => {
+    let line = lines[lineIndex]?.replace(ANSI_RE, "") ?? "";
+    if (line.startsWith("│")) line = line.slice(1);
+    const match = OMP_OPTION_MARKER_RE.exec(line);
+    return match ? match[1]!.length + (match[0].length - match[1]!.length - match[2]!.length) : null;
+  };
+  const selected = rows.filter((row) => row.selected);
+  if (selected.length !== 1) return false;
+  const selectedColumn = markerColumn(selected[0]!.lineIndex);
+  return selectedColumn !== null && rows.every((row) => markerColumn(row.lineIndex) === selectedColumn);
+}
+
 function findMenuDividers(lines: string[], hintIndex: number): [number, number] | null {
   let end = -1;
   for (let index = hintIndex - 1; index >= 0; index -= 1) {
@@ -417,8 +435,9 @@ function publicPrompt(parsed: ParsedPrompt): InteractivePrompt {
 
 function parseOmpQuestion(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
+  const clippedHintIndex = findLastIndex(lines, (_, index) => OMP_SINGLE_CLIPPED_HINT_RE.test(wrapped(lines, index)));
   const hintIndex = findLastIndex(lines, (_, index) => OMP_SINGLE_HINT_RE.test(wrapped(lines, index))
-    || OMP_CLIPPED_SINGLE_HINT_RE.test(wrapped(lines, index)) || OMP_MULTI_HINT_RE.test(wrapped(lines, index)));
+    || OMP_CLIPPED_SINGLE_HINT_RE.test(wrapped(lines, index)) || OMP_SINGLE_CLIPPED_HINT_RE.test(wrapped(lines, index)) || OMP_MULTI_HINT_RE.test(wrapped(lines, index)));
   if (hintIndex < 0) return null;
   const dividers = findMenuDividers(lines, hintIndex);
   if (!dividers) return null;
@@ -433,7 +452,8 @@ function parseOmpQuestion(screen: string): ParsedPrompt | null {
   const multiSelect = OMP_MULTI_HINT_RE.test(hint);
   const currentMulti = /(?:space|␠|␣)\s+toggle.*(?:enter|⏎)\s+(?:submit|next)/i.test(hint);
   const question = ompQuestionText(lines, startDivider, OMP_TABS_HINT_RE.test(hint));
-  if (!question || selectedIndex < 0 || optionRows.length === 0 || customIndex !== rows.length - 1) return null;
+  if (!question || selectedIndex < 0 || optionRows.length === 0 || customIndex !== rows.length - 1
+    || (hintIndex === clippedHintIndex && !ompRowsHaveAlignedMarkers(lines, rows))) return null;
   return finishPrompt("omp", {
     kind: "question", title: multiSelect ? "Multiple choice" : "Question", question, body: null,
     options: optionRows.map((row) => ({ label: row.label.replace(/ \(Recommended\)$/i, ""), description: row.description ?? null })),
@@ -2072,7 +2092,7 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   // the last one, never for a hint that ended above later output (an answered, stale menu).
   const ends = (re: RegExp): boolean => [1, 2, 3].some((span) =>
     re.test(shown.slice(-span).join(" ")) && (span === 1 || !re.test(shown.slice(-span, -1).join(" "))));
-  if (prompt.responder === "omp-question") return ends(OMP_SINGLE_HINT_RE) || ends(OMP_CLIPPED_SINGLE_HINT_RE) || ends(OMP_MULTI_HINT_RE);
+  if (prompt.responder === "omp-question") return ends(OMP_SINGLE_HINT_RE) || ends(OMP_CLIPPED_SINGLE_HINT_RE) || ends(OMP_SINGLE_CLIPPED_HINT_RE) || ends(OMP_MULTI_HINT_RE);
   if (prompt.responder === "omp-submit") return ends(OMP_REVIEW_HINT_RE);
   // Hermes keeps its status line (and maybe the hint's wrapped tail) under the hint; an answered
   // question leaves the screen, so a hint among the last few lines is the live one

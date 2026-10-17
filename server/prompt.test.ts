@@ -186,6 +186,47 @@ Claude has written up a plan and is ready to execute. Would you like to proceed?
     expect(labels(approval)).toEqual(["Approve", "Deny"]);
   });
 
+  test("recognizes OMP's clipped legacy single-select footer only with its full menu identity", () => {
+    const screen = (footer = "Enter select · n note · ↑/↓ move · Tab/←/→ · Esc can…", rows = ["❯ ○ Local socket", "  ○ Remote relay", "  ○ Other (type your own)"], suffix = "") => `
+╭─ Ask ─────────────────────────────────────────────────╮
+│ Which route should carry the fictional session?       │
+├───────────────────────────────────────────────────────┤
+${rows.map((row) => `│ ${row.padEnd(52)}│`).join("\n")}
+├───────────────────────────────────────────────────────┤
+│ ${footer.padEnd(52)}│
+╰───────────────────────────────────────────────────────╯${suffix}
+`;
+    const prompt = parseInteractivePrompt("omp", screen());
+    expect(prompt).toMatchObject({ kind: "question", question: "Which route should carry the fictional session?", custom_option_index: 2 });
+    expect(labels(prompt)).toEqual(["Local socket", "Remote relay"]);
+    expect(answerKeys(prompt!, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+    for (const clipped of ["c…", "ca…", "can…", "canc…", "cance…"]) {
+      expect(parseInteractivePrompt("omp", screen(`Enter select · n note · ↑/↓ move · Tab/←/→ · Esc ${clipped}`))).not.toBeNull();
+    }
+    expect(parseInteractivePrompt("omp", screen("Enter select · n note · ↑/↓ move · Esc ca…"))).not.toBeNull();
+    expect(parseInteractivePrompt("omp", screen("Enter select · n note · ↑/↓ move · Esc…"))).not.toBeNull();
+    expect(parseInteractivePrompt("omp", screen("Enter select · n note · ↑/↓ move · Tab/←/→…"))).not.toBeNull();
+    expect(parseInteractivePrompt("omp", screen("Enter select · n note · ↑/↓ move · Tab/←/→..."))).not.toBeNull();
+
+    expect(parseInteractivePrompt("omp", screen("Enter select · ↑/↓ move · Tab/←/→ · Esc can…"))).toBeNull();
+    expect(parseInteractivePrompt("omp", screen("Enter select · n note · Tab/←/→ · Esc can…"))).toBeNull();
+    expect(parseInteractivePrompt("omp", screen("Enter select · ↑/↓ move · Tab/←/→…"))).toBeNull();
+    expect(parseInteractivePrompt("omp", screen("Enter select · n note · ↑/↓ move · Tab/←/→"))).toBeNull();
+    expect(parseInteractivePrompt("omp", screen("Enter select · n note · ↑/↓ move · Tab/←/…"))).toBeNull();
+    for (const unmarked of ["c", "ca", "can"]) {
+      expect(parseInteractivePrompt("omp", screen(`Enter select · n note · ↑/↓ move · Tab/←/→ · Esc ${unmarked}`))).toBeNull();
+    }
+    expect(parseInteractivePrompt("omp", screen("Enter select · n note · ↑/↓ move · Esc"))).toBeNull();
+    expect(parseInteractivePrompt("omp", screen("Enter select · n note · ↑/↓ move · Tab/←/→ · Esc cypress…"))).toBeNull();
+    expect(parseInteractivePrompt("omp", screen(undefined, ["❯ ○ Local socket", "  ○ Remote relay"]))).toBeNull();
+    expect(parseInteractivePrompt("omp", screen(undefined, ["❯ ○ Local socket", "❯ ○ Remote relay", "  ○ Other (type your own)"]))).toBeNull();
+    expect(parseInteractivePrompt("omp", screen(undefined, ["❯ ○ Local socket", "  ○ Remote relay", "  Other (type your own)"]))).toBeNull();
+    expect(parseInteractivePrompt("omp", screen(undefined, ["❯ ○ Local socket", " ○ Remote relay", "  ○ Other (type your own)"]))).toBeNull();
+    expect(parseInteractivePrompt("omp", screen(undefined, ["   ❯ ○ Local socket", "     ○ Remote relay", "     ○ Other (type your own)"]))).not.toBeNull();
+    expect(parseInteractivePrompt("omp", screen(undefined, undefined, "\nUnrelated output\n"))).toBeNull();
+  });
+
+
   test("parses current OMP question hints and keeps descriptions out of the answer rows", () => {
     const screen = `
 ╭─ Ask ───────────────────────────╮
