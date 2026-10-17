@@ -930,8 +930,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   menu) stand first, in the order they were pinned, in a card (a `--hairline` `--border` edge,
   `--radius-lg`, `--space-1` padding, no fill, so hover and selection read inside it as elsewhere),
   with no mark of their own (the card says so); the rest follow `--space-2` below in the
-  chosen order. The Agents head is the only head (the pinned list is labelled **Pinned** for screen
-  readers); without pins there is no card. Pins are shared with the other browsers of the server.
+  chosen order. A quiet caption above the card (`.sidebar-pinned-label`: a pin and **Pinned** in
+  `--fs-xs` `--text-dim`) names it at a glance; it is hidden from screen readers, where the list
+  itself is labelled **Pinned**. Without pins there is no card and no caption. Pins are shared with the other browsers of the server.
 - Appearance's **Sidebar rows** is **One line** by default: a workspace row is its name, and an
   agent row is one line on a workspace row's height, its dim place after the title (the title keeps
   its width first, the place takes what is left with an ellipsis). Two lines draws the row as the
@@ -955,7 +956,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   On One line, as in herdr's own sidebar, a top-level git workspace (a repository, or a worktree
   whose repository is not open) says its branch under its name in `--text-dim` `--fs-xs`, on a
   two-line row's height (`--side-row-2`); an indented worktree, whose name already comes from its
-  branch, and a folder outside git stay one line. The branch is read with the worktree inventory
+  branch, a pinned workspace in its card (the branch stays in its tooltip and menu) and a folder
+  outside git stay one line. The branch is read with the worktree inventory
   (`useWorktreeBranches`), a repository without worktrees and a git workspace herdr has not marked
   included. As herdr draws its tree, each indented worktree hangs from its repository's folder on
   a `--hairline` `--border-strong` branch in the indent: a tee for each but the last, an elbow for
@@ -973,7 +975,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   next or previous group with its worktrees, and a worktree moves among its siblings only.
 - A workspace is pinned from its row menu (**Pin workspace** / **Unpin workspace**, first in the
   menu), as Paseo pins a chat: pinned workspaces leave their place and stand first in their PC's
-  list, in the order they were pinned, in the Agents list's card (`.sidebar-pinned`), with no mark
+  list, in the order they were pinned, in the Agents list's card (`.sidebar-pinned`, under the same **Pinned** caption), with no mark
   of their own either. A pinned repository's workspace stands alone in the card; its unpinned
   worktrees stay as standalone rows at the group's position, in their order. They are not dragged
   or moved away from their repository; unpinning the head restores the group. A pinned worktree
