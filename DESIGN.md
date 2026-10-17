@@ -12,8 +12,9 @@ chrome color, amber: focus, the chosen lens, the terminal cursor and the user's 
 buttons). Agent states carry the remaining saturated colors and none of them is amber. The user's
 chat turns are neutral raised cards, so a long thread never turns into a wall of color. Dark is the
 default, light follows the same hierarchy, and comfortable or compact density changes scale without
-changing information architecture. A neutral charcoal look and Catppuccin are
-opt-in palettes (Settings → Appearance → Colors); amber stays the default and the look before settings load.
+changing information architecture. A neutral charcoal look, Catppuccin and herdr's built-in themes
+are opt-in (Settings → Appearance → Dark theme and Light theme); amber stays the default and the
+look before settings load.
 
 The sidebar is one grid: a leading cell that says who or what a row is (the coding agent's brand
 mark, else the place's own glyph), a title, and a trailing cell that says how it is. Workspaces
@@ -79,6 +80,24 @@ Only tokens overridden by `[data-theme="light"]` have a light value. Both column
 | Popover shadow | `--shadow-pop` | `0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border)` | `0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border)` |
 | Card shadow | `--shadow-card` | `0 4px 16px rgba(0, 0, 0, 0.35)` | `0 4px 16px rgba(40, 32, 22, 0.07)` |
 | Document surface | `--pdf-page` | `#ffffff` | `#ffffff` |
+| Terminal/background | `--term-bg` | `#181613` | `#faf8f3` |
+| Terminal/foreground | `--term-fg` | `#d8d0c3` | `#2a251f` |
+| Terminal/cursor | `--term-cursor` | `#f0a830` | `#8c5000` |
+| Terminal/selection | `--term-selection` | `#4a3d26` | `#f0d9ae` |
+| Syntax/keyword | `--syntax-keyword` | `#e8875f` | `#a33a17` |
+| Syntax/string | `--syntax-string` | `#a8c17c` | `#4b6b18` |
+| Syntax/number | `--syntax-number` | `#d6a0c9` | `#8a3f7a` |
+| Syntax/type | `--syntax-type` | `#6cb8d6` | `#155a72` |
+| Syntax/variable | `--syntax-variable` | `#e0c08f` | `#7a5418` |
+| Syntax/meta | `--syntax-meta` | `#b49dd6` | `#5d4791` |
+| Alert/background | `--droplet-bg` | `#000` | `#000` |
+| Alert/text | `--droplet-text` | `#f5f5f7` | `#f5f5f7` |
+| Alert/dim text | `--droplet-text-dim` | `rgba(245, 245, 247, 0.62)` | `rgba(245, 245, 247, 0.62)` |
+| Alert/blocked | `--droplet-blocked` | `#ff8a80` | `#ff8a80` |
+| Alert/done | `--droplet-done` | `#9fd47a` | `#9fd47a` |
+| Alert/mark background | `--droplet-mark-bg` | `rgba(255, 255, 255, 0.1)` | `rgba(255, 255, 255, 0.1)` |
+| Alert/ring | `--droplet-ring` | `rgba(255, 255, 255, 0.1)` | `rgba(255, 255, 255, 0.1)` |
+| Alert/shadow | `--droplet-shadow` | `rgba(0, 0, 0, 0.35)` | `rgba(0, 0, 0, 0.35)` |
 <!-- END GENERATED THEMES -->
 
 The glass tokens are expressions over the palette above, not colors of their own:
@@ -93,11 +112,17 @@ The glass tokens are expressions over the palette above, not colors of their own
 paper, not UI, and the viewer (`.file-viewer-pdf`) must not tint it for the theme. It is named in
 `src/styles.css` under the same note and no theme or palette block overrides it.
 
-### Opt-in palettes
+### Themes
 
-`settings.palette` (`amber` default, `charcoal`, `catppuccin`) is written as `data-palette`. The
-tables above are amber, the base blocks; the two opt-in palettes override them in
-`[data-theme][data-palette]` blocks of `src/styles.css`.
+`settings.darkTheme` and `settings.lightTheme` (both `amber` by default) name the theme each mode
+draws. The resolved entry is written as `data-theme` (its mode) and `data-palette` (its id). Any
+theme can be picked on either side. Picking one half of a herdr pair also sets the other side to
+its sibling, but only while that side still holds `amber` (the default, even if picked by hand) or
+the sibling of the previous pick; any other value is kept. A dark theme picked for light mode still
+draws dark.
+The themes are amber, charcoal and catppuccin plus herdr's built-ins; herdr's `terminal` theme is
+not offered. The tables above are amber, the base blocks; every other theme overrides them in a
+`[data-theme][data-palette]` block of `src/styles.css`.
 
 The theme blocks of `src/styles.css` are the theme table and the one place a theme color is
 edited: `:root` is dark amber, `[data-theme="light"]` is light amber and
@@ -106,7 +131,11 @@ edited: `:root` is dark amber, `[data-theme="light"]` is light amber and
 (the supported entries with their roles, xterm colors and panel color), the amber table above
 between its `GENERATED THEMES` markers, the `theme-color` tag in `index.html` and the manifest's
 `theme_color` and `background_color`. Never edit those copies by hand; `--check` fails when one
-is stale. Only amber has a hex table here; read another palette's values in its blocks.
+is stale. Only amber has a hex table here; read another theme's values in its block. A herdr theme
+starts from `bun scripts/herdr-theme-proposal.ts`. Every role whose value differs from the raw
+herdr mapping (`mapTheme`), including repairs the proposal tool already made, is listed in
+`scripts/herdr-theme-overrides.ts` with its dE and reason; every entry passes AA on its
+committed hex.
 
 `--bubble-border` is the edge of the chat's user bubble. It is `transparent` where `--bg-elevated`
 alone parts the bubble from `--bg`: dark amber and dark charcoal. It is `var(--border)`
@@ -133,6 +162,8 @@ another color table. Catppuccin Latte is a second selector on the existing legac
 Its proposal is deliberately not applied: the permanent legacy oracle takes precedence over the
 herdr mapping, including existing surface, accent, cursor, status and syntax choices.
 
+- **tokyo-night**: `--border` moves dE 12.89; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **tokyo-night**: `--border-strong` moves dE 8.72; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
 - **tokyo-night-day**: `--text` moves dE 6.18; its lightness changes to keep serialized text readable at the 4.6 target.
 - **tokyo-night-day**: `--text-dim` moves dE 11.81; its lightness changes to keep serialized text readable at the 4.6 target.
 - **tokyo-night-day**: `--text-strong` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
@@ -156,6 +187,8 @@ herdr mapping, including existing surface, accent, cursor, status and syntax cho
 - **tokyo-night-day**: `--shadow-drawer` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
 - **tokyo-night-day**: `--shadow-pop` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
 - **tokyo-night-day**: `--shadow-card` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--border` moves dE 8.13; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **tokyo-night-day**: `--border-strong` moves dE 9.61; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
 
 - **gruvbox**: `--status-working` moves dE 9.80; its lightness changes to keep serialized text readable at the 4.6 target.
 - **gruvbox**: `--status-blocked` moves dE 18.18; its lightness changes to keep serialized text readable at the 4.6 target.
@@ -163,16 +196,22 @@ herdr mapping, including existing surface, accent, cursor, status and syntax cho
 - **gruvbox**: `--status-blocked-tint` moves dE 18.18; it follows the repaired foreground so its derived color stays consistent.
 - **gruvbox**: `--danger-tint` moves dE 18.18; it follows the repaired foreground so its derived color stays consistent.
 - **gruvbox**: `--danger-text` moves dE 18.18; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox**: `--border` moves dE 6.71; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **gruvbox**: `--border-strong` moves dE 20.90; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
 - **gruvbox-light**: `--status-done` moves dE 9.96; its lightness changes to keep serialized text readable at the 4.6 target.
 - **gruvbox-light**: `--status-done-tint` moves dE 9.96; it follows the repaired foreground so its derived color stays consistent.
 - **gruvbox-light**: `--syntax-string` moves dE 6.17; its lightness changes to keep serialized text readable at the 4.6 target.
 - **gruvbox-light**: `--syntax-type` moves dE 12.38; its lightness changes to keep serialized text readable at the 4.6 target.
 - **gruvbox-light**: `--syntax-meta` moves dE 5.51; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox-light**: `--border` moves dE 6.90; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **gruvbox-light**: `--border-strong` moves dE 20.78; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
 
 - **one-dark**: `--status-blocked` moves dE 12.35; its lightness changes to keep serialized text readable at the 4.6 target.
 - **one-dark**: `--status-blocked-tint` moves dE 12.35; it follows the repaired foreground so its derived color stays consistent.
 - **one-dark**: `--danger-tint` moves dE 12.35; it follows the repaired foreground so its derived color stays consistent.
 - **one-dark**: `--danger-text` moves dE 12.35; it follows the repaired foreground so its derived color stays consistent.
+- **one-dark**: `--border` moves dE 7.45; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **one-dark**: `--border-strong` moves dE 11.20; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
 - **one-light**: `--status-working` moves dE 14.64; its lightness changes to keep serialized text readable at the 4.6 target.
 - **one-light**: `--status-blocked` moves dE 17.89; its lightness changes to keep serialized text readable at the 4.6 target.
 - **one-light**: `--status-done` moves dE 20.75; its lightness changes to keep serialized text readable at the 4.6 target.
@@ -185,6 +224,7 @@ herdr mapping, including existing surface, accent, cursor, status and syntax cho
 - **one-light**: `--syntax-string` moves dE 12.04; its lightness changes to keep serialized text readable at the 4.6 target.
 - **one-light**: `--syntax-type` moves dE 12.40; its lightness changes to keep serialized text readable at the 4.6 target.
 - **one-light**: `--syntax-meta` moves dE 5.55; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--border-strong` moves dE 21.23; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
 
 - **solarized**: `--text` moves dE 6.75; its lightness changes to keep serialized text readable at the 4.6 target.
 - **solarized**: `--text-dim` moves dE 11.25; its lightness changes to keep serialized text readable at the 4.6 target.
@@ -201,9 +241,10 @@ herdr mapping, including existing surface, accent, cursor, status and syntax cho
 - **solarized**: `--syntax-function` moves dE 6.94; its lightness changes to keep serialized text readable at the 4.6 target.
 - **solarized**: `--syntax-keyword` moves dE 11.95; its lightness changes to keep serialized text readable at the 4.6 target.
 - **solarized**: `--syntax-number` moves dE 12.29; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--border` moves dE 7.51; herdr active_row_bg replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible; surface1 is already `--border-strong`.
 - **solarized-light**: `--text` moves dE 5.80; its lightness changes to keep serialized text readable at the 4.6 target.
 - **solarized-light**: `--text-dim` moves dE 14.20; its lightness changes to keep serialized text readable at the 4.6 target.
-- **solarized-light**: `--text-strong` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--text-strong` moves dE 26.00; herdr solarized surface0 (base02) replaces the repaired `--text`, which sits 1.01:1 from `--text-dim` while `--bg-hover` equals `--bg-elevated`, so strong text and the chosen segment part from quiet text.
 - **solarized-light**: `--status-working` moves dE 14.20; its lightness changes to keep serialized text readable at the 4.6 target.
 - **solarized-light**: `--status-blocked` moves dE 9.89; its lightness changes to keep serialized text readable at the 4.6 target.
 - **solarized-light**: `--status-done` moves dE 17.94; its lightness changes to keep serialized text readable at the 4.6 target.
@@ -223,6 +264,7 @@ herdr mapping, including existing surface, accent, cursor, status and syntax cho
 - **solarized-light**: `--shadow-drawer` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
 - **solarized-light**: `--shadow-pop` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
 - **solarized-light**: `--shadow-card` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--border` moves dE 6.34; herdr selection_bg replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible; surface1 is already `--border-strong`.
 
 - **kanagawa**: `--status-working` moves dE 9.73; its lightness changes to keep serialized text readable at the 4.6 target.
 - **kanagawa**: `--status-blocked` moves dE 24.67; its lightness changes to keep serialized text readable at the 4.6 target.
@@ -232,6 +274,7 @@ herdr mapping, including existing surface, accent, cursor, status and syntax cho
 - **kanagawa**: `--status-done-tint` moves dE 14.97; it follows the repaired foreground so its derived color stays consistent.
 - **kanagawa**: `--danger-tint` moves dE 24.67; it follows the repaired foreground so its derived color stays consistent.
 - **kanagawa**: `--danger-text` moves dE 24.67; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa**: `--border-strong` moves dE 21.13; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
 - **kanagawa-lotus**: `--status-working` moves dE 10.49; its lightness changes to keep serialized text readable at the 4.6 target.
 - **kanagawa-lotus**: `--status-blocked` moves dE 14.57; its lightness changes to keep serialized text readable at the 4.6 target.
 - **kanagawa-lotus**: `--status-done` moves dE 18.90; its lightness changes to keep serialized text readable at the 4.6 target.
@@ -245,6 +288,8 @@ herdr mapping, including existing surface, accent, cursor, status and syntax cho
 - **kanagawa-lotus**: `--syntax-number` moves dE 15.26; its lightness changes to keep serialized text readable at the 4.6 target.
 - **kanagawa-lotus**: `--syntax-type` moves dE 7.57; its lightness changes to keep serialized text readable at the 4.6 target.
 - **kanagawa-lotus**: `--syntax-meta` moves dE 14.27; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--border` moves dE 6.84; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **kanagawa-lotus**: `--border-strong` moves dE 14.20; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
 
 - **rose-pine**: `--status-working` moves dE 17.40; its lightness changes to keep serialized text readable at the 4.6 target.
 - **rose-pine**: `--status-done` moves dE 17.40; its lightness changes to keep serialized text readable at the 4.6 target.
@@ -252,6 +297,8 @@ herdr mapping, including existing surface, accent, cursor, status and syntax cho
 - **rose-pine**: `--status-done-tint` moves dE 17.40; it follows the repaired foreground so its derived color stays consistent.
 - **rose-pine**: `--syntax-function` moves dE 9.27; its lightness changes to keep serialized text readable at the 4.6 target.
 - **rose-pine**: `--syntax-string` moves dE 9.27; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine**: `--border` moves dE 10.15; herdr selection_bg replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible; surface1 would be 1.09:1 against the elevated card.
+- **rose-pine**: `--border-strong` moves dE 26.75; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
 - **rose-pine-dawn**: `--text-dim` moves dE 8.98; its lightness changes to keep serialized text readable at the 4.6 target.
 - **rose-pine-dawn**: `--status-working` moves dE 5.18; its lightness changes to keep serialized text readable at the 4.6 target.
 - **rose-pine-dawn**: `--status-blocked` moves dE 14.03; its lightness changes to keep serialized text readable at the 4.6 target.
@@ -266,6 +313,35 @@ herdr mapping, including existing surface, accent, cursor, status and syntax cho
 - **rose-pine-dawn**: `--syntax-number` moves dE 16.36; its lightness changes to keep serialized text readable at the 4.6 target.
 - **rose-pine-dawn**: `--syntax-type` moves dE 23.03; its lightness changes to keep serialized text readable at the 4.6 target.
 - **rose-pine-dawn**: `--syntax-meta` moves dE 11.64; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--border-strong` moves dE 31.57; herdr overlay0 replaces surface1, which is lighter than the panel, so it stays one step above the moved `--border`.
+
+### Herdr dark-only theme notes
+
+Dracula, Nord and Vesper keep their single dark row on either settings side, with no sibling
+pre-fill. The CSS blocks remain the color source; explicit repairs are recorded in the override list.
+
+- **dracula**: `--border` moves dE 16.44; reviewed herdr overlay/surface border keeps outlines distinct from elevated and input surfaces.
+- **dracula**: `--border-strong` moves dE 8.91; herdr overlay1 keeps it one step above `--border`, since surface1 and overlay0 are the same color as `--border`.
+- **dracula**: `--status-blocked` moves dE 24.57; reviewed explicit lightening and chroma relaxation beyond the proposal bound; serialized foreground reaches 4.6 and dependent defaults follow.
+- **dracula**: `--syntax-keyword` moves dE 6.69; reviewed explicit lightening and chroma relaxation beyond the proposal bound; serialized foreground reaches 4.6 and dependent defaults follow.
+- **dracula**: `--danger-text` moves dE 24.57; reviewed explicit lightening and chroma relaxation beyond the proposal bound; serialized foreground reaches 4.6 and dependent defaults follow.
+- **dracula**: `--status-blocked-tint` moves dE 24.57; reviewed explicit lightening and chroma relaxation beyond the proposal bound; serialized foreground reaches 4.6 and dependent defaults follow.
+- **dracula**: `--danger-tint` moves dE 24.57; reviewed explicit lightening and chroma relaxation beyond the proposal bound; serialized foreground reaches 4.6 and dependent defaults follow.
+- **nord**: `--border` moves dE 7.34; reviewed herdr overlay/surface border keeps outlines distinct from elevated and input surfaces.
+- **nord**: `--border-strong` moves dE 12.14; herdr overlay1 keeps it one step above `--border`, since overlay0 is already `--border`.
+- **nord**: `--status-working` moves dE 19.85; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--status-blocked` moves dE 30.16; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--status-done` moves dE 11.92; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--syntax-keyword` moves dE 7.04; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--syntax-number` moves dE 7.32; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--syntax-function` moves dE 5.70; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--danger-text` moves dE 30.16; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--status-working-tint` moves dE 19.85; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--status-blocked-tint` moves dE 30.16; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--status-done-tint` moves dE 11.92; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--danger-tint` moves dE 30.16; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **vesper**: `--border` moves dE 21.86; reviewed herdr overlay/surface border keeps outlines distinct from elevated and input surfaces.
+- **vesper**: `--border-strong` moves dE 31.63; herdr overlay1 keeps it one step above `--border`, since overlay0 is already `--border`.
 
 ### Terminal theme
 
@@ -273,12 +349,10 @@ xterm.js reads a JavaScript theme, not CSS, so `bun run generate:themes` copies 
 of every supported entry into `src/lib/themes.generated.ts`, and `terminalTheme()` hands them to
 xterm (`settings.test.ts` checks the match).
 
-| Role | Token | Dark | Light | xterm key |
-|------|-------|------|-------|-----------|
-| Background | `--term-bg` | `#181613` | `#faf8f3` | `background` |
-| Foreground | `--term-fg` | `#d8d0c3` | `#2a251f` | `foreground` |
-| Cursor | `--term-cursor` | `#f0a830` | `#8c5000` | `cursor` |
-| Selection | `--term-selection` | `#4a3d26` | `#f0d9ae` | `selectionBackground` |
+The amber dark and light values are generated in the Terminal rows of the table above.
+
+The xterm keys are `background` for `--term-bg`, `foreground` for `--term-fg`, `cursor` for
+`--term-cursor` and `selectionBackground` for `--term-selection`.
 
 Programs pick their own colors for one background, so xterm keeps a cell's text at 4.5:1 or more
 against the cell's background (`minimumContrastRatio`, WCAG AA): a foreground below it moves toward
@@ -294,10 +368,8 @@ palette: `--syntax-comment` is `--text-dim`, `--syntax-function` is `--accent`,
 (each at least 4.5:1 on `--bg-panel` and `--bg-elevated`). Catppuccin follows Catppuccin's own mapping: keywords are mauve, so `--syntax-function` is
 blue there instead of `--accent`, and Latte's colors are darkened to stay readable.
 
-| Block | keyword | string | number | type | variable | meta |
-|-------|---------|--------|--------|------|----------|------|
-| Dark amber | `#e8875f` | `#a8c17c` | `#d6a0c9` | `#6cb8d6` | `#e0c08f` | `#b49dd6` |
-| Light amber | `#a33a17` | `#4b6b18` | `#8a3f7a` | `#155a72` | `#7a5418` | `#5d4791` |
+The amber values of `--syntax-keyword`, `--syntax-string`, `--syntax-number`, `--syntax-type`,
+`--syntax-variable` and `--syntax-meta` are generated in the Syntax rows of the table above.
 
 Charcoal and Catppuccin set their own six (and Catppuccin its `--syntax-function`) in their
 blocks of `src/styles.css`.
@@ -307,7 +379,7 @@ blocks of `src/styles.css`.
 - `--notice` colors a note that the view is partial (a file cut short, code too long to color): the
   size in the header's meta line becomes `256 KB of 1.3 MB`, always beside a warning icon so the
   color is not the only sign. It is a warning yellow, at least 4.5:1 on
-  `--bg`, `--bg-panel` and `--bg-elevated`: amber `#e8c55c` / `#7a5a00`. Charcoal and Catppuccin
+  `--bg`, `--bg-panel` and `--bg-elevated` (see `--notice` in the generated table). Charcoal and Catppuccin
   (its yellow) set theirs in their blocks of `src/styles.css`.
 - The header's meta line (size, folder) is `--fs-xs`. A file that cannot be previewed says so in
   one sentence ("This file can't be previewed here. Download it to open it.") over its type and
@@ -558,18 +630,19 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 
 ### In-app alert
 
-One set for both themes: the card is island black wherever it shows.
+One set for both themes: the card is island black wherever it shows. Values are generated in the
+Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 
-| Token | Value | Usage |
-|-------|-------|-------|
-| `--droplet-bg` | `#000` | Drop, anchor and card |
-| `--droplet-text` | `#f5f5f7` | Pane name |
-| `--droplet-text-dim` | `rgba(245, 245, 247, 0.62)` | Ended detail, blank mark |
-| `--droplet-blocked` | `#ff8a80` | Needs-input detail and dot |
-| `--droplet-done` | `#9fd47a` | Finished detail and dot |
-| `--droplet-mark-bg` | `rgba(255, 255, 255, 0.1)` | Agent mark disc |
-| `--droplet-ring` | `rgba(255, 255, 255, 0.1)` | Card hairline |
-| `--droplet-shadow` | `rgba(0, 0, 0, 0.35)` | Drop shadow under the liquid |
+| Token | Usage |
+|-------|-------|
+| `--droplet-bg` | Drop, anchor and card |
+| `--droplet-text` | Pane name |
+| `--droplet-text-dim` | Ended detail, blank mark |
+| `--droplet-blocked` | Needs-input detail and dot |
+| `--droplet-done` | Finished detail and dot |
+| `--droplet-mark-bg` | Agent mark disc |
+| `--droplet-ring` | Card hairline |
+| `--droplet-shadow` | Drop shadow under the liquid |
 
 ### Shell
 - `.app` is a full-viewport column: `.app-header` over `.app-body`; the body is sidebar plus
@@ -1651,7 +1724,7 @@ One set for both themes: the card is island black wherever it shows.
   an edge swipe) takes one step out and never leaves the app from inside Settings; the Back
   control, the X, Escape and the scrim take the same entries off. Beside the list, turning pages
   replaces the one entry. A reload steps out of the entries it finds; Forward reopens the page.
-- Pages, in order: **Appearance** (theme, colors, density, language, sidebar rows), **Chat**
+- Pages, in order: **Appearance** (theme, dark theme, light theme, density, language, sidebar rows), **Chat**
   (panes open in, show thinking, chat width, chat font size and family; then
   **Composer**: Enter sends, send queued messages automatically, and on a touch screen the suggestion
   chip (off by default); then **Quick replies**; then **File viewer**: wrap long
