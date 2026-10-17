@@ -633,6 +633,8 @@ export const JA: Record<string, string> = {
   "More than one could be picked": "複数選択可",
   "Or type your own answer": "または回答を直接入力",
   "Questions": "質問一覧",
+  "Not answered": "未回答",
+  "Note: {note}": "メモ: {note}",
   "(answered)": "(回答済み)",
   "Agent is asking": "エージェントからの質問",
   "View plan": "プランを表示",

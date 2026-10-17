@@ -635,6 +635,8 @@ export const ZH: Record<string, string> = {
   "More than one could be picked": "可多选",
   "Or type your own answer": "或输入你自己的回答",
   "Questions": "问题列表",
+  "Not answered": "未回答",
+  "Note: {note}": "备注：{note}",
   "(answered)": "(已回答)",
   "Agent is asking": "Agent 提问",
   "View plan": "查看计划",
