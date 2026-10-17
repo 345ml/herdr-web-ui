@@ -786,6 +786,9 @@ describe("palette", () => {
           return [[Number(parts[1]), Number(parts[2]), Number(parts[3])], Number(parts[4])];
         };
         const color = (role: string, under: Rgb = [0, 0, 0]): Rgb => over(rgba(role), under);
+        // a field's placeholder is --text-dim on --bg-input (src/styles.css ::placeholder)
+        const input = color("bg-input");
+        if (ratio(color("text-dim", input), input) < 4.5) failures.push(`${key} placeholder (text-dim) on bg-input`);
         for (const surface of ["bg", "bg-panel", "bg-elevated", "bg-hover"]) {
           const ground = color(surface);
           for (const text of ["text", "text-dim"]) {

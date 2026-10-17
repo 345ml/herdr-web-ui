@@ -40,8 +40,9 @@ import { applyPaneStatus } from "./lib/snapshot.ts";
 import { rosterPanes } from "./lib/dagPane.ts";
 import { SnapshotRequests } from "./lib/snapshotRequests.ts";
 import { alertPrefs, useSettings } from "./lib/settings.ts";
-import { useShortcuts } from "./lib/shortcuts.ts";
+import { formatKeys, shortcutDisplayKeys, useShortcuts } from "./lib/shortcuts.ts";
 import { useMediaQuery } from "./lib/useMediaQuery.ts";
+import { useAnnouncedText } from "./lib/useAnnouncedText.ts";
 import { PaneLenses } from "./lib/paneLens.ts";
 import { paneContextPress } from "./lib/paneCanvas.ts";
 import type { AppActions, PaneView, PaneControls } from "./lib/actions.ts";
@@ -151,6 +152,42 @@ function storedView(lenses: PaneLenses, picks: ReadonlyMap<string, PaneView>, pa
  *  attaches and detaches it as the other is not there (lib/split.ts). */
 function SlotSessions({ slot, machineIds, children }: { slot: SplitSlot; machineIds: readonly string[]; children: ReactNode }) {
   return slot === "b" ? <MachineSessionsProvider machineIds={machineIds}>{children}</MachineSessionsProvider> : <>{children}</>;
+}
+
+/** The header's note. Its status is in the header from the header's first render, clipped while empty
+    (never display: none, as the connection chip), and its words land a frame after the box, even the
+    ones a page opens with (lib/useAnnouncedText.ts). Its sentence is cut like the title it stands in
+    for, under its own class: only the pane title carries .context-title-text, which the browser
+    checks measure (scripts/mobile-tabs-regression.ts). */
+function HeaderNote({ note }: { note: string | null }) {
+  const shown = useAnnouncedText(note);
+  return (
+    <div className={shown === null ? "visually-hidden" : "context"}>
+      <span className={shown === null ? undefined : "pill header-note"} role="status" style={{ minWidth: 0 }}>
+        <span className="header-note-text">{shown}</span>
+      </span>
+    </div>
+  );
+}
+
+/** The connecting shell's one sidebar line: the same announced status as every other (lib/useAnnouncedText.ts). */
+function ConnectingNote() {
+  const t = useT();
+  const shown = useAnnouncedText(t("Connecting…"));
+  return <p className={shown === null ? "visually-hidden" : "tree-state"} role="status">{shown}</p>;
+}
+
+/** The header's connection chip. It speaks only while the bridge is not live; live, it stays in the document
+    for a screen reader (and the browser scripts that wait on it), drawn by nothing (styles.css). Its word lands
+    a frame after the chip (lib/useAnnouncedText.ts), as every status line's does. */
+function ConnectionChip({ connected, word, title }: { connected: boolean; word: string; title: string | undefined }) {
+  const shown = useAnnouncedText(word);
+  return (
+    <span className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`} role="status" title={title}>
+      <span className="conn-dot" aria-hidden="true" />
+      <span className="conn-text">{shown}</span>
+    </span>
+  );
 }
 
 function Brand() {
@@ -289,6 +326,11 @@ export function App() {
     const timer = window.setTimeout(() => setHeaderNote(null), headerNote === "copied" ? 1600 : 8000);
     return () => window.clearTimeout(timer);
   }, [headerNote]);
+  // the note that stands where the title does: a link that could not open what it named or was
+  // copied, or a link waiting for its PC's roster before it can open what it named (HeaderNote)
+  const note = headerNote
+    ? t(headerNote === "copied" ? "Link copied" : headerNote === "pane-closed" ? "That agent has closed: its workspace is open" : headerNote === "machine-missing" ? "That link's PC is not set up here" : "That link's workspace is closed")
+    : !linkLanded ? t("Opening link…") : null;
   // App picked the selected pane itself because the one selected closed: it must not raise a
   // phone's keyboard (over the drawer the close was tapped in) until the user picks a pane or lens
   const [autoSelected, setAutoSelected] = useState(false);
@@ -457,6 +499,9 @@ export function App() {
   // the dialog makes a tab in this workspace instead of a workspace, while set
   const [newTab, setNewTab] = useState<NewTabTarget | null>(null);
   const [connected, setConnected] = useState(false);
+  /** the active terminal's socket has been connected on this page before (PaneTerminal reports it): not
+   *  connected, the chip says reconnecting; before this page's first connection to the PC, connecting */
+  const [connectedBefore, setConnectedBefore] = useState(false);
   // the active slot's pane could not be drawn: no terminal is attached there to say so itself
   const paneLost = useCallback(() => setConnected(false), []);
   const [outputStopped, setOutputStopped] = useState(false);
@@ -755,7 +800,7 @@ export function App() {
     // Only another PC mounts a new terminal (and socket), which reports its own state. A pane
     // on the same PC keeps the connected socket, which never reports again: resetting here
     // left the header on "reconnecting" after every pane switch.
-    if (machineId !== selectedMachineRef.current) setConnected(false);
+    if (machineId !== selectedMachineRef.current) { setConnected(false); setConnectedBefore(false); }
     // the active half alone takes the pick, whatever the other half shows (lib/split.ts)
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setAutoSelected(false); setDrawerOpen(false);
     setOutputStopped(false);
@@ -1002,7 +1047,7 @@ export function App() {
     const current: SplitTarget | null = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
     const after: SplitSlot = next ? next.active : was && sameTarget(select, was.other) ? otherSlot(was.active) : was ? was.active : soloSlot;
     const before = was ? (was.active === after ? current : was.other) : after === soloSlot ? current : null;
-    if (before === null || before.machineId !== select.machineId) setConnected(false);
+    if (before === null || before.machineId !== select.machineId) { setConnected(false); setConnectedBefore(false); }
     if (next === null) endSplit(after); else setSplit(next);
     setSelectedMachineId(select.machineId); setSelectedPaneId(select.paneId); setAutoSelected(keepFocus); setOutputStopped(false);
     storeSelection(select.machineId, select.paneId);
@@ -1232,7 +1277,7 @@ export function App() {
   const bellVisible = notifications === "default" || notifications === "granted" || settings.alertInApp;
   // the menu's button carries a dot while alerts are off here: the one state of the menu worth a glance
   const alertsOffDot = bellVisible && !bell.on;
-  const connWord = t(connected ? "live" : outputStopped ? "disconnected" : "reconnecting");
+  const connWord = t(connected ? "live" : outputStopped ? "disconnected" : connectedBefore ? "reconnecting" : "connecting");
   const crumb = selectedPane && selectedTitle !== null
     ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, cwd: selectedPane.cwd })
     : null;
@@ -1355,7 +1400,7 @@ export function App() {
 
   // The header's More menu: what used to be three buttons of its own. Each item is there under
   // the condition its button had. At phone width the palette's button gives its room to the
-  // pane's title.
+  // pane's title, and the menu's first item opens the palette.
   // a link to a PC this app does not have lands on this PC instead, and says so: the roster lists
   // every configured PC, connected or not, so one missing from it is not set up here. So does a
   // selection of a PC removed since (a reload, a new window), here or on another device. Only a
@@ -1394,7 +1439,12 @@ export function App() {
   }, []);
   const closeNewSession = useCallback(() => { setNewSessionOpen(false); setNewPrefill(null); setNewFields(null); }, []);
 
+  // the palette's shortcut, said beside its item where a hardware keyboard is likely (a fine pointer)
+  const keyboardLikely = useMediaQuery("(hover: hover) and (pointer: fine)");
+  const paletteKeys = keyboardLikely ? formatKeys(shortcutDisplayKeys("palette", settings.shortcutOverrides)).join("+") : "";
   const moreItems: RowMenuItem[] = [
+    // first at every width: a phone's header has no palette button, and a touch screen no shortcut
+    { id: "palette", label: t("Search panes and actions"), icon: Search, ...(paletteKeys ? { hint: paletteKeys } : {}), run: () => openPalette() },
     ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
     // from 769px Files has its own button beside the lens switch; a phone keeps it here
     ...(selectedPane && !wideScreen ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
@@ -1418,9 +1468,7 @@ export function App() {
         </header>
         <div className="app-body">
           <aside className="sidebar">
-            <p className="tree-state" role="status">
-              Connecting…
-            </p>
+            <ConnectingNote />
           </aside>
           <main className="terminal-host">
             <div className="terminal-placeholder">
@@ -1469,13 +1517,8 @@ export function App() {
             <Search />
           </button>
         </div>
-        {headerNote ? (
-          <div className="context">
-            <span className="pill header-note" role="status" style={{ minWidth: 0 }}>
-              <span className="context-title-text">{t(headerNote === "copied" ? "Link copied" : headerNote === "pane-closed" ? "That agent has closed: its workspace is open" : headerNote === "machine-missing" ? "That link's PC is not set up here" : "That link's workspace is closed")}</span>
-            </span>
-          </div>
-        ) : selectedPane && crumb ? (
+        <HeaderNote note={note} />
+        {note !== null ? null : selectedPane && crumb ? (
           <div className="context" title={crumb.tooltip}>
             <div className="context-title">
               {selectedAgent && <AgentMark agent={selectedAgent} size={18} />}
@@ -1519,16 +1562,11 @@ export function App() {
           </>
         )}
         <div className="header-meta">
-          {/* speaks only while the bridge is not live; live, it stays in the document for a screen
-              reader (and the browser scripts that wait on it), drawn by nothing (styles.css) */}
-          <span
-            className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`}
-            role="status"
+          <ConnectionChip
+            connected={connected}
+            word={connWord}
             title={[connected ? null : connWord, targetHerdr ? t("herdr {version} · protocol {protocol}", { version: targetHerdr.version, protocol: targetHerdr.protocol }) : null].filter((part) => part !== null).join(" · ") || undefined}
-          >
-            <span className="conn-dot" aria-hidden="true" />
-            <span className="conn-text">{connWord}</span>
-          </span>
+          />
           {!targetHerdr && <span className="pill pill-offline">{t("herdr offline")}</span>}
           <span className="header-more">
             <button
@@ -1702,7 +1740,7 @@ export function App() {
                         terminalFontFamily={settings.terminalFontFamily}
                         theme={resolvedEntry.mode}
                         palette={resolvedEntry.id}
-                        onConnectionChange={active && itemActive ? (next) => { setConnected(next); if (next) setOutputStopped(false); } : undefined}
+                        onConnectionChange={active && itemActive ? (next, before) => { setConnected(next); setConnectedBefore(before); if (next) setOutputStopped(false); } : undefined}
                         onServerMessage={active && itemActive ? handleServerMessage : undefined}
                       />
                     </OpenFileContext.Provider>} />

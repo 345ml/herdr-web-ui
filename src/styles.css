@@ -156,7 +156,13 @@
   --header-h-wide: 46px;
   --sidebar-w: 320px;
   --control-h: 34px;
-  --touch-target: 40px;
+  /* what the segmented track takes from --control-h above and below an option: its padding and
+     hairline, both sides. An option is --control-h less this, and its touch expander grows from that */
+  --segmented-inset: 6px;
+  --touch-target: 44px;
+  /* the smallest hit area a mouse gets: a glyph button under --control-h keeps its look and reaches
+     it through an invisible ::before expander (ChatView.css, Composer.css), never by growing */
+  --pointer-target: 24px;
   /* the phone header's controls: the bar (--header-h) holds them */
   --touch-target-header: 44px;
   --keybar-h: 48px;
@@ -1094,6 +1100,50 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ---------- line breaking ---------- */
+
+/* The UI language is <html lang> (lib/settings.ts applyToDocument). Set on body alone so that every
+   text inherits it once and no descendant sets it again: Korean keeps each word whole (keep-all
+   breaks at spaces and punctuation only, never "시도하 / 세요."), Japanese and Chinese take strict
+   kinsoku (no line starts with 。」 or a small kana). English keeps the browser's defaults. */
+html:lang(ko) body {
+  word-break: keep-all;
+}
+
+html:is(:lang(ja), :lang(zh)) body {
+  line-break: strict;
+}
+
+/* Code, keys, the terminal and the two text boxes keep the browser's breaking, and their children
+   inherit this reset: a path or a command is not a word, and xterm lays out its own cells.
+   overflow-wrap is not part of this rule; the chat's and the composer's own rules keep it. */
+:is(pre, code, kbd, samp, .xterm, .composer-text, .terminal-input-text) {
+  word-break: normal;
+  line-break: auto;
+}
+
+/* The two boxes' placeholders are interface copy, not typed text: Korean keeps their words whole
+   too ("넣지 않습니다", never "넣지 않 / 습니다"). The pseudo-element alone takes keep-all, so the box
+   itself, what the user types in it, and the code and terminal subtrees keep the reset above. */
+html:lang(ko) :is(.composer-text, .terminal-input-text)::placeholder {
+  word-break: keep-all;
+}
+
+/* A failure's folded line quotes what the PC or the browser said (lib/userError.ts): a sentence,
+   often a translated one, so it takes the interface face. The mono stack has no Hangul: Korean set
+   in it gets a letter-wide space between words and a period set off from its word. */
+:is([role="alert"], .composer-note-text, .composer-note-details, .chat-failure-details) > code {
+  font-family: var(--font-ui);
+}
+
+/* A title that wraps takes even lines, never a full line over a one-word stub: dialog titles, the
+   empty chat's greeting and a Settings group's caption. */
+.modal-title,
+.composer-greeting-title,
+.settings-section h3 {
+  text-wrap: balance;
+}
+
 button {
   font: inherit;
   color: inherit;
@@ -1373,7 +1423,10 @@ button {
   letter-spacing: var(--tracking-tight);
 }
 
-.context-title-text {
+/* the header note's sentence (.header-note-text, App.tsx) is cut like the title it stands in for; its
+   own class keeps .context-title-text on the pane title alone (the browser checks measure it) */
+.context-title-text,
+.header-note-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1734,6 +1787,20 @@ button {
   .error-retry {
     height: var(--touch-target);
   }
+
+  /* the segmented track keeps its height; each option is a finger's width, so neighbours never
+     share a tap, and reaches the target's height through an invisible expander, as the palette's
+     filter chips do (CommandPalette.css) */
+  .segmented > button {
+    position: relative;
+    min-width: var(--touch-target);
+  }
+
+  .segmented > button::before {
+    content: "";
+    position: absolute;
+    inset: calc((var(--control-h) - var(--segmented-inset) - var(--touch-target)) / 2) 0;
+  }
 }
 
 .pill {
@@ -1753,6 +1820,12 @@ button {
   color: var(--status-blocked);
   border-color: var(--status-blocked);
   background: var(--danger-tint);
+}
+
+/* a pill that carries a sentence (the header's link and copy notes): the interface face, for the
+   same reason as a failure's detail line above */
+.header-note {
+  font-family: var(--font-ui);
 }
 
 /* a lens that is on its way: inside a segmented button, so it stays small */
@@ -1841,7 +1914,7 @@ button {
   align-items: center;
   gap: var(--space-1);
   white-space: nowrap; /* Hangul/CJK may break between any two syllables: keep a label on one line */
-  height: calc(var(--control-h) - 6px);
+  height: calc(var(--control-h) - var(--segmented-inset));
   padding: 0 var(--space-3);
   background: transparent;
   border: 0;
@@ -2053,6 +2126,14 @@ button {
   color: var(--text-strong);
   font: inherit;
   font-size: var(--fs-input);
+}
+
+/* a field's placeholder: the browser's own grey reads 3.8:1 on a dark field, so every placeholder
+   takes --text-dim (at least 4.5:1 on every field of every palette) at full opacity, which Firefox
+   would otherwise dim */
+::placeholder {
+  color: var(--text-dim);
+  opacity: 1;
 }
 
 /* a bordered field shows focus on its own border; the offset ring is for controls without one */
