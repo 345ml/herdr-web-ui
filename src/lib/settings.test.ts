@@ -567,7 +567,7 @@ describe("palette", () => {
   // Every check below iterates the supported entries of src/lib/themes.generated.ts and reads each value from
   // src/styles.css through the theme parser, never from generated data, so a new theme is checked with no edit here.
   const css = readFileSync(join(import.meta.dir, "..", "styles.css"), "utf8");
-  const legacy = new Set(Object.keys(baseline.combos));
+  const legacy = new Set([...Object.keys(baseline.combos), "catppuccin-latte/light"]);
   const entries = SUPPORTED_ENTRIES.map(({ id, mode }) => ({ id, mode, key: `${id}/${mode}` }));
   /** Runs one entry's checks; an unreadable theme value becomes a failure naming entry and role, not a crash. */
   const checked = (failures: string[], check: () => void): void => {
@@ -675,6 +675,9 @@ describe("palette", () => {
             if (ratio(color(`status-${state}`, backdrop), backdrop) < 4.5) failures.push(`${key} ${state} badge on ${surface}`);
           }
         }
+        // a primary control's label on its own fill (.btn-primary)
+        const fill = color("primary");
+        if (ratio(color("primary-text", fill), fill) < 4.5) failures.push(`${key} primary-text on primary`);
         // highlighted code sits on the panel (a file preview) or an elevated card (a chat code block)
         for (const surface of ["bg-panel", "bg-elevated"]) {
           const ground = color(surface);

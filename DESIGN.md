@@ -117,6 +117,147 @@ all palettes) and dark Catppuccin, whose elevated surface is darker than its can
   accents are under 4.5:1 on these surfaces, so each keeps its hue and is darkened until it passes
   AA. It keeps amber's rounded corners.
 
+### Herdr theme pair notes
+
+Theme colors remain authored only in `src/styles.css`; the notes here describe deviations, not
+another color table. Catppuccin Latte is a second selector on the existing legacy light block.
+Its proposal is deliberately not applied: the permanent legacy oracle takes precedence over the
+herdr mapping, including existing surface, accent, cursor, status and syntax choices.
+
+- **tokyo-night-day**: `--text` moves dE 6.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--text-dim` moves dE 11.81; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--text-strong` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--status-working` moves dE 18.99; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--status-blocked` moves dE 23.41; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--status-done` moves dE 12.85; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--status-working-tint` moves dE 18.99; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--status-blocked-tint` moves dE 23.41; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--status-done-tint` moves dE 12.85; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--danger-tint` moves dE 23.41; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--danger-text` moves dE 23.41; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--scrim` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--line-number` moves dE 11.81; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--syntax-function` moves dE 14.94; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-keyword` moves dE 5.15; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-string` moves dE 8.95; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-number` moves dE 11.25; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-type` moves dE 10.85; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-variable` moves dE 6.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-meta` moves dE 14.24; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--shadow-drawer` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--shadow-pop` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--shadow-card` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+
+- **gruvbox**: `--status-working` moves dE 9.80; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox**: `--status-blocked` moves dE 18.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox**: `--status-working-tint` moves dE 9.80; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox**: `--status-blocked-tint` moves dE 18.18; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox**: `--danger-tint` moves dE 18.18; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox**: `--danger-text` moves dE 18.18; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox-light**: `--status-done` moves dE 9.96; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox-light**: `--status-done-tint` moves dE 9.96; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox-light**: `--syntax-string` moves dE 6.17; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox-light**: `--syntax-type` moves dE 12.38; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox-light**: `--syntax-meta` moves dE 5.51; its lightness changes to keep serialized text readable at the 4.6 target.
+
+- **one-dark**: `--status-blocked` moves dE 12.35; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-dark**: `--status-blocked-tint` moves dE 12.35; it follows the repaired foreground so its derived color stays consistent.
+- **one-dark**: `--danger-tint` moves dE 12.35; it follows the repaired foreground so its derived color stays consistent.
+- **one-dark**: `--danger-text` moves dE 12.35; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--status-working` moves dE 14.64; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--status-blocked` moves dE 17.89; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--status-done` moves dE 20.75; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--status-working-tint` moves dE 14.64; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--status-blocked-tint` moves dE 17.89; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--status-done-tint` moves dE 20.75; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--danger-tint` moves dE 17.89; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--danger-text` moves dE 17.89; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--syntax-function` moves dE 6.19; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--syntax-string` moves dE 12.04; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--syntax-type` moves dE 12.40; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--syntax-meta` moves dE 5.55; its lightness changes to keep serialized text readable at the 4.6 target.
+
+- **solarized**: `--text` moves dE 6.75; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--text-dim` moves dE 11.25; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--text-strong` moves dE 6.75; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--status-working` moves dE 24.14; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--status-blocked` moves dE 29.43; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--status-done` moves dE 19.69; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--status-working-tint` moves dE 24.14; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--status-blocked-tint` moves dE 29.43; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--status-done-tint` moves dE 19.69; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--danger-tint` moves dE 29.43; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--danger-text` moves dE 29.43; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--line-number` moves dE 11.25; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--syntax-function` moves dE 6.94; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--syntax-keyword` moves dE 11.95; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--syntax-number` moves dE 12.29; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--text` moves dE 5.80; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--text-dim` moves dE 14.20; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--text-strong` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--status-working` moves dE 14.20; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--status-blocked` moves dE 9.89; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--status-done` moves dE 17.94; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--status-working-tint` moves dE 14.20; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--status-blocked-tint` moves dE 9.89; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--status-done-tint` moves dE 17.94; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--danger-tint` moves dE 9.89; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--danger-text` moves dE 9.89; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--scrim` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--line-number` moves dE 14.20; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--syntax-function` moves dE 10.19; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--syntax-keyword` moves dE 5.11; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--syntax-string` moves dE 14.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--syntax-type` moves dE 13.99; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--syntax-variable` moves dE 5.80; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--syntax-meta` moves dE 14.09; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--shadow-drawer` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--shadow-pop` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--shadow-card` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+
+- **kanagawa**: `--status-working` moves dE 9.73; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa**: `--status-blocked` moves dE 24.67; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa**: `--status-done` moves dE 14.97; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa**: `--status-working-tint` moves dE 9.73; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa**: `--status-blocked-tint` moves dE 24.67; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa**: `--status-done-tint` moves dE 14.97; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa**: `--danger-tint` moves dE 24.67; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa**: `--danger-text` moves dE 24.67; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--status-working` moves dE 10.49; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--status-blocked` moves dE 14.57; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--status-done` moves dE 18.90; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--status-working-tint` moves dE 10.49; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--status-blocked-tint` moves dE 14.57; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--status-done-tint` moves dE 18.90; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--danger-tint` moves dE 14.57; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--danger-text` moves dE 14.57; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--syntax-function` moves dE 5.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--syntax-string` moves dE 13.23; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--syntax-number` moves dE 15.26; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--syntax-type` moves dE 7.57; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--syntax-meta` moves dE 14.27; its lightness changes to keep serialized text readable at the 4.6 target.
+
+- **rose-pine**: `--status-working` moves dE 17.40; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine**: `--status-done` moves dE 17.40; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine**: `--status-working-tint` moves dE 17.40; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine**: `--status-done-tint` moves dE 17.40; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine**: `--syntax-function` moves dE 9.27; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine**: `--syntax-string` moves dE 9.27; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--text-dim` moves dE 8.98; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--status-working` moves dE 5.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--status-blocked` moves dE 14.03; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--status-done` moves dE 5.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--status-working-tint` moves dE 5.18; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--status-blocked-tint` moves dE 14.03; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--status-done-tint` moves dE 5.18; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--danger-tint` moves dE 14.03; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--danger-text` moves dE 14.03; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--line-number` moves dE 8.98; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--syntax-keyword` moves dE 9.20; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--syntax-number` moves dE 16.36; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--syntax-type` moves dE 23.03; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--syntax-meta` moves dE 11.64; its lightness changes to keep serialized text readable at the 4.6 target.
+
 ### Terminal theme
 
 xterm.js reads a JavaScript theme, not CSS, so `bun run generate:themes` copies these four tokens
