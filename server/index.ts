@@ -10,7 +10,7 @@ import { accessSync, constants, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ServerWebSocket } from "bun";
 
-import type { AgentKind, ClientMessage, HealthAuth, HerdrPane, IntegrationsResponse, PanePlan, PendingMessage, PluginActionsResponse, ServerFeature, ServerMessage } from "../shared/protocol.ts";
+import type { AgentKind, ClientMessage, HealthAuth, HerdrPane, IntegrationsResponse, PanePlan, PendingMessage, PluginActionsResponse, ProjectFavicon, ServerFeature, ServerMessage } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { DEVICE_COOKIE, authClient, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isServeOwnerRequest, lanExposed } from "./access.ts";
@@ -29,6 +29,7 @@ import { claudeSubagents, within } from "./claude-subagents.ts";
 import { SHELL_AGENTS, shellAgentExecutable } from "./shell-agent.ts";
 import { claudeForegroundSession, claudeSessionTempDir } from "./claude-store.ts";
 import { fileResponse, findFile, crossSiteFileRead, forgetPageMedia, pageMediaResponse, pageMediaSource, PAGE_MEDIA_PATH } from "./file-view.ts";
+import { findProjectFavicon } from "./project-favicon.ts";
 import {
   agentManifests,
   HerdrError,
@@ -1371,9 +1372,15 @@ export function createServer(
         }
       }
 
-      if (pathname === "/api/fs/stat" || pathname === "/api/fs/file") {
+      if (pathname === "/api/fs/stat" || pathname === "/api/fs/file" || pathname === "/api/fs/favicon") {
         if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
         if (crossSiteFileRead(request)) return jsonResponse({ error: { code: "cross_site", message: "A file is read from this app or opened in a tab, not loaded by another page" } }, 403);
+        // a folder's project icon: every place it may be kept, in one answer that a miss is part of
+        if (pathname === "/api/fs/favicon") {
+          const root = url.searchParams.get("root") ?? "";
+          if (root.trim() === "") return badRequest("missing_root", "root is required");
+          return jsonResponse({ icon: await findProjectFavicon(root) } satisfies ProjectFavicon);
+        }
         const paneId = url.searchParams.get("pane_id");
         let cwd: string | null = null;
         if (paneId) {
