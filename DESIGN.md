@@ -960,6 +960,16 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   their most recent state change (herdr's `state_change_seq`, read from the snapshot's `agents`),
   within each PC, so the agent just worked in stays on top while it runs and after it finishes.
   It changes only the Agents list; herdr's order and the workspace rows stay as they are.
+- herdr reports DONE until one of its own clients shows the pane, so an agent opened only here
+  would keep its finished dot. A DONE opened here (selected while the page is visible) since it
+  finished draws as ready in the Agents list and in its workspace's roll-up, as herdr's own client
+  does; its next finish draws its dot again. There is no setting for it. "Opened" is kept per PC
+  in this browser (`herdr-web-ui:seen:<pc>`) and dropped with the PC; a PC with no record yet
+  starts with nothing opened, so every finish keeps its dot until it is opened here. Another
+  browser or device keeps its own record. Storage holds herdr's own counters only, so a page
+  reloaded within the poll window after leaving a finish it watched shows that finish's dot again
+  rather than guess. herdr's counter only goes up within a session, so a look recorded above it is
+  from before a herdr restart and is dropped.
 - Each workspace row holds its folder (top-level rows), a leading glyph, the name (on two lines,
   the title over the place) and the compact state at the right. The leading glyph is the brand mark of the agent in the pane the row opens; a row that opens a
   shell shows the terminal glyph, and a linked worktree without an agent the branch glyph. The

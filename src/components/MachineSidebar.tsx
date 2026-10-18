@@ -30,8 +30,8 @@ export function MachineSidebar(props: Props) {
   const t = useT();
   const { canInstall, installed, install, help } = useInstallPrompt();
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
-  // both lists draw from it: live counters per PC (lib/sidebarActivity.tsx)
-  const activity = useSidebarActivityState(props.machines);
+  // both lists draw from it: live counters per PC and the finishes looked at here (lib/sidebarActivity.tsx)
+  const activity = useSidebarActivityState(props.machines, props.selectedMachineId, props.selectedPaneId);
   // the roster's wait is a live region that is in the list from its first render, clipped while empty (never
   // display: none), and its words land a frame after it (lib/useAnnouncedText.ts)
   const loadingWords = useAnnouncedText(props.machines.length === 0 ? t("Loading PCs…") : null);

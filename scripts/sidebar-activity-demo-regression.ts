@@ -175,7 +175,7 @@ try {
       }
       console.log("PASS a repository pin keeps only its row in the card; its worktrees stay outside, fixed and ordered, and regroup on unpin, on desktop and phone");
 
-      // herdr's order before and after a finish; a right-click pins an agent, an opened DONE keeps herdr's dot
+      // herdr's order before and after a finish; a right-click pins an agent; an opened DONE reads as ready (#1279)
       await withPage(browser, {}, async (page) => {
         const selected = await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection"));
         await page.locator(".header-more-button").focus();
@@ -266,9 +266,12 @@ try {
         await page.waitForFunction((paneId) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === paneId, panes.api, { timeout: 5_000 });
         assert.equal(await agentSelect.getAttribute("aria-current"), "true", "ordinary click still selects the agent");
         assert.equal(await page.locator(".row-menu, .row-sheet").count(), 0, "selecting the agent does not open a menu");
-        assert.equal(await agentStatus(page, API), "done", "herdr's DONE stands until herdr itself shows the pane");
+        await waitStatus(page, API, "idle");
+        const rollUp = () => page.locator(`.workspace-select[data-pane="${panes.api}"] .sidebar-status`).getAttribute("data-status");
+        assert.notEqual(await rollUp(), "done", "the workspace row's roll-up drops the opened finish too");
+        assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER, "reading a finish does not move an agent");
       });
-      console.log("PASS the Agents list keeps herdr's order through a finish, and an opened DONE keeps its dot");
+      console.log("PASS the Agents list keeps herdr's order through a finish, and an opened DONE reads as ready");
 
       await withPage(browser, {}, async (page) => {
         const drawerToggle = page.locator('button[aria-controls="workspace-drawer"]');
@@ -316,12 +319,26 @@ try {
         await waitStatus(page, INFRA, "done");
         assert.equal((await agentTitles(page))[1], INFRA, "the agent just worked in stays on top after it finishes");
 
-        // opening it here leaves herdr's DONE as it is
+        // opening it here reads it: its DONE draws as ready, and stays so once another pane is open
+        // and after a reload (the record is this browser's)
         await agent(page, INFRA).locator(".agent-select").click();
         await page.waitForFunction((paneId) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === paneId, panes.omp, { timeout: 5_000 });
-        assert.equal(await agentStatus(page, INFRA), "done", "an opened DONE keeps its dot");
+        await waitStatus(page, INFRA, "idle");
+        assert.equal((await agentTitles(page))[1], INFRA, "reading a finish does not move it");
+        await page.locator(".machine-workspaces .workspace-select", { hasText: "flaky-retry-test" }).first().click();
+        await page.reload();
+        await page.locator(".conn-live").waitFor({ state: "attached" });
+        await agents(page).first().waitFor({ state: "attached" });
+        assert.equal(await agentStatus(page, INFRA), "idle", "a finish read here stays read after a reload");
+        // a later finish not looked at gets its dot again
+        await agent(page, INFRA).locator(".agent-select").click();
+        await page.locator(".composer-text").fill("One more check");
+        await page.locator(".composer-text").press("Enter");
+        await waitStatus(page, INFRA, "working");
+        await page.locator(".machine-workspaces .workspace-select", { hasText: "flaky-retry-test" }).first().click();
+        await waitStatus(page, INFRA, "done");
       });
-      console.log("PASS Activity pins blocked and follows recency; an opened DONE keeps its dot");
+      console.log("PASS Activity pins blocked and follows recency; an opened DONE reads as ready, through a reload, until the next finish");
 
       // the demo keeps its agent template after its last agent closes (#529 review): a workspace
       // made in an emptied demo still lists its agent with herdr's counter

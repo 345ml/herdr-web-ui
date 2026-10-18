@@ -370,7 +370,8 @@ try {
   await until(async () => {
     const roster = await (await context.request.get(`${origin}/api/machines`)).json() as { machines: Machine[] };
     const settled = roster.machines.find((machine) => machine.id === "local")?.snapshot?.panes.find((pane) => pane.pane_id === paneA)?.agent_status;
-    return (settled === "idle" || settled === "done") && await agentRow(paneA).locator(".badge").getAttribute("data-status") === settled;
+    // paneA is the pane on screen: its row draws a DONE as ready, as herdr's own client does (#1279)
+    return (settled === "idle" || settled === "done") && await agentRow(paneA).locator(".badge").getAttribute("data-status") === "idle";
   }, "the agent row reflects the bridge's completed-turn status");
   console.log("PASS delayed machines poll preserves newer streamed pane status");
 
