@@ -961,15 +961,20 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   within each PC, so the agent just worked in stays on top while it runs and after it finishes.
   It changes only the Agents list; herdr's order and the workspace rows stay as they are.
 - herdr reports DONE until one of its own clients shows the pane, so an agent opened only here
-  would keep its finished dot. A DONE opened here (selected while the page is visible) since it
+  would keep its finished dot. A DONE opened here (the selected pane actually drawn while the page
+  is visible and the phone workspace drawer is closed) since it
   finished draws as ready in the Agents list and in its workspace's roll-up, as herdr's own client
   does; its next finish draws its dot again. There is no setting for it. "Opened" is kept per PC
   in this browser (`herdr-web-ui:seen:<pc>`) and dropped with the PC; a PC with no record yet
   starts with nothing opened, so every finish keeps its dot until it is opened here. Another
-  browser or device keeps its own record. Storage holds herdr's own counters only, so a page
+  browser or device keeps its own record; tabs of this browser merge their records when saving.
+  A deep link redirected by herdr's zoom never counts the hidden target as opened. The inactive
+  half of a browser split is not acknowledged. Storage holds herdr's own counters only, so a page
   reloaded within the poll window after leaving a finish it watched shows that finish's dot again
-  rather than guess. herdr's counter only goes up within a session, so a look recorded above it is
-  from before a herdr restart and is dropped.
+  rather than guess. A pending look follows a stand-in to a real counter only when the counter
+  proves the same transition, with no event-stream or PC connection gap; ambiguous advances keep
+  the dot. herdr's counter only goes up within a session, so any stored look above a live counter
+  proves a restart and drops the whole PC record, also when the restart happened with the page closed.
 - Each workspace row holds its folder (top-level rows), a leading glyph, the name (on two lines,
   the title over the place) and the compact state at the right. The leading glyph is the brand mark of the agent in the pane the row opens; a row that opens a
   shell shows the terminal glyph, and a linked worktree without an agent the branch glyph. The
