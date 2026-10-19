@@ -73,6 +73,10 @@ exist on purpose: an install cannot be pointed elsewhere by its environment.
 
 ## Reading the counts
 
+`bun scripts/telemetry-report.ts --out <file.md>` runs the weekly installs, DAU, WAU, MAU,
+agent-kind and country queries below, plus daily actives per country for the last 28 days, and
+writes them as one report.
+
 ```sh
 bunx wrangler d1 execute herdr-web-ui-telemetry --remote --command "<query>"
 ```
