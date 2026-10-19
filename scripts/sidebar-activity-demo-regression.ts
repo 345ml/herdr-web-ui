@@ -30,9 +30,10 @@ function installSidebarFixture(): void {
     for (const machine of machines) {
       const snapshot = machine.snapshot;
       if (!snapshot) continue;
+      snapshot.finish_epoch = `sidebar-fixture:${machine.id}:1`;
       for (const pane of snapshot.panes) {
         const finish = state.finishes[pane.pane_id];
-        if (finish) pane.agent_status = finish.status;
+        if (finish) { pane.agent_status = finish.status; pane.finish_id = finish.seq; }
       }
       for (const agent of snapshot.agents) {
         const finish = state.finishes[agent.pane_id];
@@ -75,6 +76,11 @@ function installSidebarFixture(): void {
         get: () => (event: MessageEvent<string>) => {
           const body = JSON.parse(event.data);
           if (body.type === "machines") body.machines = patch(body.machines);
+          // This fixture represents one server across reloads. Its events and HTTP snapshots
+          // must share the same epoch, including the demo's own timed status changes.
+          if (body.type === "machine-message" && body.message.type === "pane-status") {
+            body.message.finish_epoch = `sidebar-fixture:${body.machine_id}:1`;
+          }
           receive?.call(this, new MessageEvent("message", { data: JSON.stringify(body) }));
         },
         set: (handler: EventSource["onmessage"]) => { receive = handler; },
@@ -194,8 +200,9 @@ try {
           await page.waitForFunction((id) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === id, panes.api);
           assert.equal(await page.locator(`[data-layout-pane="${panes.omp}"].is-hidden`).count(), 1);
           await waitStatus(page, INFRA, "done");
-          const record = await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:seen:local") ?? "{}"));
-          assert.equal(record[panes.omp], undefined, "a redirected deep link never acknowledges the hidden pane");
+          const recorded = await page.evaluate((id) => Object.keys(localStorage).some((key) =>
+            key.startsWith("herdr-web-ui:finish:local:") && key.endsWith(`:${encodeURIComponent(id)}`)), panes.omp);
+          assert.equal(recorded, false, "a redirected deep link never acknowledges the hidden pane");
         });
         console.log("PASS a deep link into a zoomed tab acknowledges only the presented pane");
       }
@@ -226,12 +233,39 @@ try {
           assert.equal(await agent(page, INFRA).locator(".agent-select").getAttribute("aria-current"), null,
             "reload does not reopen the finish to acknowledge it again");
           // A storage-loss control proves READY above came from the record, not the demo or selection.
-          await page.evaluate(() => localStorage.removeItem("herdr-web-ui:seen:local"));
+          await page.evaluate(() => {
+            for (const key of Object.keys(localStorage)) if (key.startsWith("herdr-web-ui:finish:")) localStorage.removeItem(key);
+          });
           await page.reload();
           await waitStatus(page, INFRA, "done");
           await waitStatus(page, API, "done");
         });
         console.log("PASS switching and reload preserve a read raw DONE; losing storage restores its dot");
+      }
+      if (!finishCase || finishCase === "overlay") {
+        await withPage(browser, {}, async (page) => {
+          await page.goto(`${url}?pane=${encodeURIComponent(panes.omp)}`);
+          await page.locator(".conn-live").waitFor({ state: "attached" });
+          await page.evaluate((id) => window.sidebarFixture.finish(id, "working", 100), panes.omp);
+          // A deep-linked file mounts the real full-screen viewer even when the demo cannot
+          // serve its contents. It covers the selected pane until the user dismisses it.
+          await page.goto(`${url}?pane=${encodeURIComponent(panes.omp)}&file=${encodeURIComponent("/tmp/finish.txt")}`);
+          await page.locator(".file-viewer").waitFor();
+          await page.evaluate((id) => window.sidebarFixture.finish(id, "done", 101), panes.omp);
+          await agent(page, INFRA).locator('.sidebar-status[data-status="done"]').waitFor({ state: "attached" });
+          const key = `herdr-web-ui:finish:local:${encodeURIComponent("sidebar-fixture:local:1")}:${encodeURIComponent(panes.omp)}`;
+          assert.equal(await page.evaluate((key) => localStorage.getItem(key), key), null,
+            "a phone file viewer does not acknowledge the finish underneath");
+          const evidence = process.env["UI_EVIDENCE_DIR"];
+          if (evidence) {
+            mkdirSync(evidence, { recursive: true });
+            await page.screenshot({ path: join(evidence, "finish-file-viewer-phone.png") });
+          }
+          await page.locator(".file-viewer").getByRole("button", { name: "Close file", exact: true }).click();
+          await page.locator(".file-viewer").waitFor({ state: "detached" });
+          await agent(page, INFRA).locator('.sidebar-status[data-status="idle"]').waitFor({ state: "attached" });
+        }, true);
+        console.log("PASS a phone file viewer preserves an underlying finish until the pane is uncovered");
       }
       if (!finishCase) {
       // Workspace menus no longer mix in pane operations; header More keeps pane movement.

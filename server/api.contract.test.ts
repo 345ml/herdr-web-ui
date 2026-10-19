@@ -1538,6 +1538,9 @@ describe("GET /api/session", () => {
       expect(typeof ws.label).toBe("string");
     }
     expect(body.snapshot.panes.length).toBeGreaterThan(0);
+    expect(typeof body.snapshot.finish_epoch).toBe("string");
+    expect(body.snapshot.finish_epoch?.length).toBeGreaterThan(0);
+    expect(body.snapshot.panes.every((pane) => Number.isSafeInteger(pane.finish_id))).toBe(true);
   });
 });
 
@@ -2826,11 +2829,20 @@ describe("web push", () => {
       }
       expect(live).toBe(true);
 
+      let finishId = 0;
+      let finishEpoch: string | undefined;
       const report = async (agent: string, state: string, expected: string) => {
         watcher!.seen.length = 0;
-        await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent, state });
-        await watcher!.waitFor((message) => message.type === "pane-status" && message.pane_id === paneId && message.agent_status === expected,
+        const frameReady = watcher!.waitFor((message) => message.type === "pane-status" && message.pane_id === paneId && message.agent_status === expected,
           `${agent}/${state} presented as ${expected}`, 5_000);
+        await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent, state });
+        const frame = await frameReady;
+        if (frame.type !== "pane-status" || typeof frame.finish_epoch !== "string") throw new Error("expected status frame with epoch");
+        if (expected === "done") finishId++;
+        expect(frame.finish_id).toBe(finishId);
+        expect(typeof frame.finish_epoch).toBe("string");
+        if (finishEpoch) expect(frame.finish_epoch).toBe(finishEpoch);
+        finishEpoch = frame.finish_epoch;
         const raw = (await herdrRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot;
         // herdr itself may promote an unfocused idle after work to done.
         const rawStatus = raw.panes.find((pane) => pane.pane_id === paneId)?.agent_status;
@@ -2839,6 +2851,8 @@ describe("web push", () => {
         const shown = await (await fetch(`${origin}/api/session`)).json() as { snapshot: SessionSnapshot };
         expect(shown.snapshot.panes.find((pane) => pane.pane_id === paneId)?.agent_status).toBe(expected);
         expect(shown.snapshot.agents.find((pane) => pane.pane_id === paneId)?.agent_status).toBe(expected);
+        expect(shown.snapshot.finish_epoch).toBe(finishEpoch);
+        expect(shown.snapshot.panes.find((pane) => pane.pane_id === paneId)?.finish_id).toBe(finishId);
       };
 
       for (let turn = 0; turn < 2; turn++) {

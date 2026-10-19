@@ -974,21 +974,29 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   their most recent state change (herdr's `state_change_seq`, read from the snapshot's `agents`),
   within each PC, so the agent just worked in stays on top while it runs and after it finishes.
   It changes only the Agents list; herdr's order and the workspace rows stay as they are.
-- herdr reports DONE until one of its own clients shows the pane, so an agent opened only here
-  would keep its finished dot. A DONE opened here (the selected pane actually drawn while the page
-  is visible and the phone workspace drawer is closed) since it
-  finished draws as ready in the Agents list and in its workspace's roll-up, as herdr's own client
-  does; its next finish draws its dot again. There is no setting for it. "Opened" is kept per PC
-  in this browser (`herdr-web-ui:seen:<pc>`) and dropped with the PC; a PC with no record yet
-  starts with nothing opened, so every finish keeps its dot until it is opened here. Another
-  browser or device keeps its own record; tabs of this browser merge their records when saving.
-  A deep link redirected by herdr's zoom never counts the hidden target as opened. The inactive
-  half of a browser split is not acknowledged. Storage holds herdr's own counters only, so a page
-  reloaded within the poll window after leaving a finish it watched shows that finish's dot again
-  rather than guess. A pending look follows a stand-in to a real counter only when the counter
-  proves the same transition, with no event-stream or PC connection gap; ambiguous advances keep
-  the dot. herdr's counter only goes up within a session, so any stored look above a live counter
-  proves a restart and drops the whole PC record, also when the restart happened with the page closed.
+- A DONE opened here draws as ready in the Agents list and its workspace roll-up, as herdr's
+  own client does. This follows the Codex app's [unread completion dot](https://github.com/openai/codex/issues/50856),
+  but keeps read state browser-local rather than claiming cross-device acknowledgement. Only the
+  selected pane actually rendered on a visible page counts. The drawer, Settings, New session,
+  Files, a popup file/diff viewer, machine dialogs, descendant dialogs and menus all block it,
+  on desktop too. A docked file/web panel does not cover the pane. A zoom redirect never
+  acknowledges the hidden target; neither does the inactive half of a browser split. A background
+  wait still shows BG, and working or blocked never draws ready.
+- Each PC's bridge assigns `finish_id` after all status overrides, incrementing on each observed
+  transition into DONE, not on herdr's `state_change_seq`. Snapshots and status events carry it.
+  A random `finish_epoch` changes when the web server starts or observes a replacement herdr
+  socket (Windows: changed pid:start marker). A failed read or reconnect alone proves no restart.
+  Events carry the epoch too: changing it invalidates other panes' cached finish IDs until their
+  next snapshot. The browser never infers a restart from counters. An older bridge missing either
+  field always keeps the dot; transitions wholly missed by the server cannot be counted.
+- Each `(PC, epoch, pane)` has its own `herdr-web-ui:finish:` localStorage key, containing the
+  greatest viewed finish ID and its write time. Tabs writing different panes cannot overwrite
+  one another; storage events reconcile a same-pane race toward the maximum. A tab closed before
+  reconciliation or storage eviction can bring back a read dot, never acknowledge a newer finish.
+  Old `herdr-web-ui:seen:<pc>` records are removed. Epochs this tab actually left are removed;
+  unfamiliar epochs are ignored, not deleted using a possibly stale first roster. Storage is
+  capped at 2,000 keys, oldest first, never pruned by a tab's pane or PC roster. Another browser or
+  device keeps its own record. Raw statuses and herdr recency still determine Agents order.
 - Each workspace row holds its folder (top-level rows), a leading glyph, the name (on two lines,
   the title over the place) and the compact state at the right. The leading glyph is the brand mark of the agent in the pane the row opens; a row that opens a
   shell shows the terminal glyph, and a linked worktree without an agent the branch glyph. The

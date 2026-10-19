@@ -316,7 +316,7 @@ export class MachineManager {
     // its id used again is a pane heard of for the first time
     if (message.type === "pane-exited") this.heardAgents.forget(message.pane_id);
     if (message.type === "pane-status" && this.local.snapshot) {
-      this.local.snapshot = { ...this.local.snapshot, panes: this.local.snapshot.panes.map((p: HerdrPane) => p.pane_id === message.pane_id ? paneAfterStatus(p, message) : p) };
+      this.local.snapshot = snapshotAfterStatus(this.local.snapshot, message);
     }
     if (message.type === "session-changed" || message.type === "pane-exited") void this.refreshLocal();
   }
@@ -754,7 +754,7 @@ export class MachineManager {
       if (["snapshot", "pane-status", "pane-exited"].includes(message.type)) runtime.snapshotRevision++;
       if (message.type === "snapshot") { runtime.machine.snapshot = message.snapshot; this.push.seed(forAlerts(message.snapshot.panes), runtime.machine.id, runtime.machine.name); this.emit(); }
       if (message.type === "pane-status") {
-        if (runtime.machine.snapshot) runtime.machine.snapshot = { ...runtime.machine.snapshot, panes: runtime.machine.snapshot.panes.map((p) => p.pane_id === message.pane_id ? paneAfterStatus(p, message) : p) };
+        if (runtime.machine.snapshot) runtime.machine.snapshot = snapshotAfterStatus(runtime.machine.snapshot, message);
         void this.push.onStatus(message.pane_id, alertStatus(message.agent_status, message.background_wait), runtime.machine.id).catch(() => {});
       }
       if (message.type === "pane-exited") void this.push.onEnded(message.pane_id, runtime.machine.id).catch(() => {});
@@ -862,10 +862,19 @@ export class MachineManager {
  * them; one that names neither leaves them. Every frame says whether the pane waits on its turn's work.
  */
 export function paneAfterStatus(p: HerdrPane, message: Extract<ServerMessage, { type: "pane-status" }>): HerdrPane {
-  const { background_tasks: before, background_wait: _waited, plan: planBefore, ...pane } = p;
+  const { background_tasks: before, background_wait: _waited, plan: planBefore, finish_id: _finish, ...pane } = p;
   const tasks = message.background_tasks === undefined ? before : message.background_tasks > 0 ? message.background_tasks : undefined;
   const plan = message.plan === undefined ? planBefore : message.plan ?? undefined;
-  return { ...pane, agent_status: message.agent_status, ...(tasks === undefined ? {} : { background_tasks: tasks }), ...(message.background_wait ? { background_wait: true } : {}), ...(plan === undefined ? {} : { plan }) };
+  return { ...pane, agent_status: message.agent_status, ...(message.finish_id === undefined ? {} : { finish_id: message.finish_id }), ...(tasks === undefined ? {} : { background_tasks: tasks }), ...(message.background_wait ? { background_wait: true } : {}), ...(plan === undefined ? {} : { plan }) };
+}
+
+function snapshotAfterStatus(snapshot: SessionSnapshot, message: Extract<ServerMessage, { type: "pane-status" }>): SessionSnapshot {
+  return { ...snapshot, finish_epoch: message.finish_epoch, panes: snapshot.panes.map((pane) => {
+    if (pane.pane_id === message.pane_id) return paneAfterStatus(pane, message);
+    if (snapshot.finish_epoch === message.finish_epoch) return pane;
+    const { finish_id: _finish, ...rest } = pane;
+    return rest;
+  }) };
 }
 
 /** A remote PC's panes as its alerts take them: one waiting on its turn's background work is working. */

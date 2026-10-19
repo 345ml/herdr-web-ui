@@ -56,6 +56,11 @@ type SseListener = (event: MessageEvent) => void;
 const machines: Machine[] = structuredClone(machinesFixture.machines as Machine[]);
 const local = machines[0]!;
 const snapshot = (): SessionSnapshot => local.snapshot!;
+// Reloading the demo starts its in-memory server over, so IDs from the previous page cannot match.
+for (const machine of machines) if (machine.snapshot) {
+  machine.snapshot.finish_epoch = crypto.randomUUID();
+  for (const pane of machine.snapshot.panes) pane.finish_id = pane.agent_status === "done" ? 1 : 0;
+}
 /** pane id -> fixture key ("api", "web", …) */
 const keyOfPane = new Map<string, string>(Object.entries(panesFixture as Record<string, string>).map(([key, paneId]) => [paneId, key]));
 const chats = new Map<string, { turns: ConversationTurn[]; metadata: { model: string; reasoning_effort: string } }>(
@@ -84,6 +89,7 @@ const nextStateSeq = (): number => ++stateSeq;
 // taken once, as the pane, tab and workspace templates are: the last agent can be closed in a demo
 const agentTemplate = local.snapshot?.agents[0] ? structuredClone(local.snapshot.agents[0]) : null;
 function addAgent(pane: Pane): void {
+  pane.finish_id = pane.agent_status === "done" ? 1 : 0;
   const snap = snapshot();
   if (!pane.agent || !agentTemplate || snap.agents.some((agent) => agent.pane_id === pane.pane_id)) return;
   snap.agents.push({ ...structuredClone(agentTemplate), pane_id: pane.pane_id, tab_id: pane.tab_id, workspace_id: pane.workspace_id, terminal_id: pane.terminal_id,
@@ -298,14 +304,16 @@ function paneOf(paneId: string): Pane | undefined {
 function setStatus(paneId: string, status: AgentStatus): void {
   const pane = paneOf(paneId);
   if (!pane) return;
+  if (status === "done" && pane.agent_status !== "done") pane.finish_id = (pane.finish_id ?? 0) + 1;
   pane.agent_status = status;
   // as herdr does, every state change bumps the session's counter on the pane's agent
   const agent = snapshot().agents.find((entry) => entry.pane_id === paneId);
   if (agent) Object.assign(agent, { agent_status: status, state_change_seq: nextStateSeq() });
   for (const workspace of snapshot().workspaces) if (workspace.workspace_id === pane.workspace_id) workspace.agent_status = status;
   for (const tab of snapshot().tabs) if (tab.tab_id === pane.tab_id) tab.agent_status = status;
-  emitSse({ type: "machine-message", machine_id: local.id, message: { type: "pane-status", pane_id: paneId, agent_status: status } });
-  for (const socket of sockets) socket.push({ type: "pane-status", pane_id: paneId, agent_status: status });
+  const message: ServerMessage = { type: "pane-status", pane_id: paneId, agent_status: status, finish_id: pane.finish_id, finish_epoch: snapshot().finish_epoch };
+  emitSse({ type: "machine-message", machine_id: local.id, message });
+  for (const socket of sockets) socket.push(message);
 }
 
 function conversationChanged(paneId: string): void {
