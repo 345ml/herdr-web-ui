@@ -37,13 +37,22 @@ describe("activity counters, independent of opened finishes", () => {
     expect([...liveSeqs(snap({ a: "idle", shell: "working", c: "done" }, { a: 5, c: 7 }), memory)]).toEqual([["a", 5], ["c", 7]]);
   });
 
-  it("ranks blocked first, then raw recency, with stable ties regardless of seen state", () => {
+  it("ranks blocked first, then raw recency, with stable ties", () => {
     const panes = [pane("old", "done", 1), pane("working", "working"), pane("blocked", "blocked"), pane("new", "done", 1), pane("tie", "idle")];
     const seqs = new Map([["old", 20], ["working", 10], ["blocked", 1], ["new", 30], ["tie", 30]]);
     expect(activityOrder(panes, (p) => p, seqs).map((p) => p.pane_id)).toEqual(["blocked", "new", "tie", "old", "working"]);
-    expect(shownStatus(panes[3]!, { new: 1 })).toBe("idle");
-    expect(activityOrder(panes, (p) => p, seqs).map((p) => p.pane_id)).toEqual(["blocked", "new", "tie", "old", "working"]);
     expect(activityOrder(panes, (p) => p, new Map([...seqs, ["working", 60]])).map((p) => p.pane_id).slice(0, 2)).toEqual(["blocked", "working"]);
+  });
+
+  it("drops pre-restart stand-ins for an older bridge with no finish epoch", () => {
+    const memory = newSeqMemory();
+    liveSeqs(snap({ a: "idle", b: "done", c: "idle" }, { a: 50, b: 49, c: 48 }), memory);
+    liveSeqs(snap({ a: "working", b: "done", c: "idle" }, { a: 50, b: 49, c: 48 }), memory);
+    liveSeqs(snap({ a: "working", b: "done", c: "idle" }, { a: 2, b: 3, c: 1 }), memory);
+    const latest = snap({ a: "working", b: "done", c: "working" }, { a: 2, b: 3, c: 9 });
+    const seqs = liveSeqs(latest, memory);
+    expect(activityOrder(latest.panes, (pane) => pane, seqs).map((pane) => pane.pane_id)).toEqual(["c", "b", "a"]);
+    expect(memory.bumped.size).toBe(0);
   });
 });
 

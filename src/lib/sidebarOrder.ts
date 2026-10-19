@@ -20,6 +20,9 @@ export const newSeqMemory = (): SeqMemory => ({ status: new Map(), bumped: new M
 export function liveSeqs(snapshot: Pick<SessionSnapshot, "agents" | "panes"> | null | undefined, memory: SeqMemory): Map<string, number> {
   const seqs = stateSeqs(snapshot);
   const panes = snapshot?.panes ?? [];
+  // Recency only: legacy bridges have no finish_epoch, but a rollback invalidates stand-ins.
+  // This never changes acknowledgement records or identifies a finish.
+  if ([...seqs].some(([id, seq]) => seq < (memory.real.get(id) ?? seq))) memory.bumped.clear();
   let top = Math.max(0, ...seqs.values(), ...memory.bumped.values());
   for (const pane of panes) {
     const changed = memory.status.has(pane.pane_id) && memory.status.get(pane.pane_id) !== pane.agent_status;
