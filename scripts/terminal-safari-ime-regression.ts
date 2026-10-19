@@ -46,18 +46,24 @@ export async function checkSafariIme(browser: Browser, origin: string, pane: str
   // beforeinput selection is the range Safari replaces, including final consonants.
   // The keyCode and the keydown's place (before or after the edit) are parameters: the
   // recorded trace fixes them for typing, not for Backspace, Delete or punctuation.
-  const edit = async (type: string, data: string, start: number, end = start, keyCode = 229, order: "after" | "before" = "after") => {
+  // "commit" is Safari 27.0.1's Backspace on a single jamo: the input method's unchanged
+  // replacement first, then a keyCode 8 keydown whose default action deletes the jamo.
+  const edit = async (type: string, data: string, start: number, end = start, keyCode = 229, order: "after" | "before" | "commit" = "after") => {
     await input.evaluate(async (element, { type, data, start, end, keyCode, order }) => {
       const box = element as HTMLTextAreaElement;
       const key = keyCode === 8 ? "Backspace" : keyCode === 46 ? "Delete" : data;
       const keydown = () => box.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, keyCode, isComposing: false }));
-      // A browser makes no DOM edit for a keydown that was cancelled before it.
-      if (order === "after" || keydown()) {
+      const change = (type: string, data: string, start: number, end: number) => {
         box.setSelectionRange(start, end);
         box.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, composed: true, inputType: type, data, isComposing: false }));
         box.setRangeText(data, start, end, "end");
         box.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: type, data, isComposing: false }));
+      };
+      // A browser makes no DOM edit for a keydown that was cancelled before it.
+      if (order !== "before" || keydown()) {
+        change(type, data, start, end);
         if (order === "after") keydown();
+        if (order === "commit" && keydown()) change("deleteContentBackward", "", start, start + data.length);
       }
       box.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key, keyCode: keyCode === 229 ? 71 : keyCode, isComposing: false }));
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -101,6 +107,15 @@ export async function checkSafariIme(browser: Browser, origin: string, pane: str
     await edit("deleteContentBackward", "", 0, 1);
     await input.press("a");
     await check("a", "deleting uncommitted Hangul sends no partial syllable or DEL");
+
+    // Safari 27.0.1: the third Backspace deletes the last jamo and the fourth one reaches the pane.
+    await reset(); await syllable(["ㅎ", "하", "한"]);
+    await edit("insertReplacementText", "하", 0, 1);
+    await edit("insertReplacementText", "ㅎ", 0, 1);
+    await edit("insertReplacementText", "ㅎ", 0, 1, 8, "commit");
+    await input.press("Backspace");
+    await input.press("Space");
+    await check("\x7f ", "Backspace past an emptied syllable sends one DEL");
 
     // Backspace and Delete may report their own keyCode, before or after Safari's edit.
     // Every case runs and every failure is reported together.
