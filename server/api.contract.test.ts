@@ -1544,6 +1544,9 @@ describe("GET /api/session", () => {
       expect(typeof ws.label).toBe("string");
     }
     expect(body.snapshot.panes.length).toBeGreaterThan(0);
+    expect(typeof body.snapshot.finish_epoch).toBe("string");
+    expect(body.snapshot.finish_epoch?.length).toBeGreaterThan(0);
+    expect(body.snapshot.panes.every((pane) => Number.isSafeInteger(pane.finish_id))).toBe(true);
   });
 });
 
@@ -2017,7 +2020,7 @@ describe("WebSocket roles and status push", () => {
     const stranger = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
     try {
       owner.send({ type: "attach", pane_id: qaPaneId!, cols: 100, rows: 30 });
-      await owner.waitFor((m) => m.type === "input-ready" && m.pane_id === qaPaneId, "input ready", 15_000);
+      await owner.waitFor((m) => m.type === "input-ready" && m.pane_id === qaPaneId && m.ready !== false, "input ready", 15_000);
       const captured = join(stateDir, "unicode-input.txt");
       owner.send({ type: "input", pane_id: qaPaneId!, text: `printf '%s' '한글😀' > '${captured}'\r` });
       const deadline = Date.now() + 5000;
@@ -2131,7 +2134,7 @@ describe("WebSocket roles and status push", () => {
       phone.send({ type: "resize", pane_id: paneId, cols: 91, rows: 27 });
       // the terminal lens's grid is the pty's, not the pane's own one the covered attach left it at
       expect(await phone.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId && m.cols === 91, "the resize applied after creation", 15_000)).toMatchObject({ cols: 91, rows: 27 });
-      await phone.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId, "attach took", 15_000);
+      await phone.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId && m.ready !== false, "attach took", 15_000);
       // regression (fails on main): inspect the rendered screen, not diff-rendered PTY bytes
       phone.send({ type: "input", pane_id: paneId, text: "clear; echo size=$(stty size | tr ' ' x)\r" });
       const deadline = Date.now() + 15_000;
@@ -2178,7 +2181,7 @@ describe("WebSocket roles and status push", () => {
     };
     const attach = async (socket: RecordingSocket, paneId: string, cols: number, rows: number) => {
       socket.send({ type: "attach", pane_id: paneId, cols, rows });
-      await socket.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId, "attach took", 15_000);
+      await socket.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId && m.ready !== false, "attach took", 15_000);
     };
 
     it("returns the pty to the desktop's grid when the phone leaves the terminal lens", async () => {
@@ -2230,7 +2233,7 @@ describe("WebSocket roles and status push", () => {
         });
       try {
         await attach(desktop, paneId, 120, 40);
-        const ready = nextHidden((m) => m.type === "input-ready" && m.pane_id === paneId);
+        const ready = nextHidden((m) => m.type === "input-ready" && m.pane_id === paneId && m.ready !== false);
         hidden.attach(paneId, 100, 30);
         hidden.connect();
         await ready;
@@ -2307,7 +2310,7 @@ describe("WebSocket roles and status push", () => {
         await attach(phone, paneId, 53, 33);
         // the third client watches from the chat lens until it resizes
         third.send({ type: "attach", pane_id: paneId, cols: 30, rows: 10, keep_size: true });
-        await third.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId, "third attach took", 15_000);
+        await third.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId && m.ready !== false, "third attach took", 15_000);
         await desktop.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId && m.cols === 53, "the phone took the grid", 5000);
 
         desktop.seen.length = 0;
@@ -2334,7 +2337,7 @@ describe("WebSocket roles and status push", () => {
       try {
         await attach(desktop, paneId, 120, 40);
         chat.send({ type: "attach", pane_id: paneId, cols: 53, rows: 33, keep_size: true });
-        await chat.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId, "chat attach took", 15_000);
+        await chat.waitFor((m) => m.type === "input-ready" && m.pane_id === paneId && m.ready !== false, "chat attach took", 15_000);
         desktop.seen.length = 0;
         chat.seen.length = 0;
         chat.send({ type: "release-size", pane_id: paneId });
@@ -2832,11 +2835,20 @@ describe("web push", () => {
       }
       expect(live).toBe(true);
 
+      let finishId = 0;
+      let finishEpoch: string | undefined;
       const report = async (agent: string, state: string, expected: string) => {
         watcher!.seen.length = 0;
-        await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent, state });
-        await watcher!.waitFor((message) => message.type === "pane-status" && message.pane_id === paneId && message.agent_status === expected,
+        const frameReady = watcher!.waitFor((message) => message.type === "pane-status" && message.pane_id === paneId && message.agent_status === expected,
           `${agent}/${state} presented as ${expected}`, 5_000);
+        await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent, state });
+        const frame = await frameReady;
+        if (frame.type !== "pane-status" || typeof frame.finish_epoch !== "string") throw new Error("expected status frame with epoch");
+        if (expected === "done") finishId++;
+        expect(frame.finish_id).toBe(finishId);
+        expect(typeof frame.finish_epoch).toBe("string");
+        if (finishEpoch) expect(frame.finish_epoch).toBe(finishEpoch);
+        finishEpoch = frame.finish_epoch;
         const raw = (await herdrRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot;
         // herdr itself may promote an unfocused idle after work to done.
         const rawStatus = raw.panes.find((pane) => pane.pane_id === paneId)?.agent_status;
@@ -2845,6 +2857,8 @@ describe("web push", () => {
         const shown = await (await fetch(`${origin}/api/session`)).json() as { snapshot: SessionSnapshot };
         expect(shown.snapshot.panes.find((pane) => pane.pane_id === paneId)?.agent_status).toBe(expected);
         expect(shown.snapshot.agents.find((pane) => pane.pane_id === paneId)?.agent_status).toBe(expected);
+        expect(shown.snapshot.finish_epoch).toBe(finishEpoch);
+        expect(shown.snapshot.panes.find((pane) => pane.pane_id === paneId)?.finish_id).toBe(finishId);
       };
 
       for (let turn = 0; turn < 2; turn++) {

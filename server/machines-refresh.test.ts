@@ -175,6 +175,27 @@ it("records a remote bridge failure and a later recovery without its address or 
 });
 
 describe("machine snapshot refresh races", () => {
+  it("preserves a remote bridge's finish identity through HTTP snapshots and status events", async () => {
+    const { manager, drive, remote, runtime, send } = await remoteFixture();
+    const current = snapshot("done");
+    current.finish_epoch = "remote-server";
+    current.panes[0]!.finish_id = 3;
+    remote.set(current);
+    await drive.refresh(runtime);
+    expect(runtime.machine.snapshot).toMatchObject({ finish_epoch: "remote-server", panes: [{ finish_id: 3 }] });
+    const received = new Promise<ServerMessage>((resolve, reject) => {
+      const timer = setTimeout(() => { unsubscribe(); reject(new Error("no remote finish event")); }, 2000);
+      const unsubscribe = manager.subscribe((event) => {
+        if (event.type === "machine-message" && event.machine_id === "remote" && event.message.type === "pane-status") {
+          clearTimeout(timer); unsubscribe(); resolve(event.message);
+        }
+      });
+    });
+    send({ type: "pane-status", pane_id: "fixture:p1", agent_status: "done", finish_id: 4, finish_epoch: "remote-server" });
+    expect(await received).toMatchObject({ finish_id: 4, finish_epoch: "remote-server" });
+    expect(runtime.machine.snapshot?.panes[0]?.finish_id).toBe(4);
+  });
+
   it("keeps a newer local status and retries the invalidated snapshot", async () => {
     const { manager, drive, local, rosters } = await fixture();
     local.hold();
