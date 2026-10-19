@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
-import type { AgentStatus, SessionSnapshot } from "../shared/protocol.ts";
+import type { AgentStatus, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
+import type { CompletionTracker } from "./completion.ts";
 import { herdrSocketPath } from "./herdr/client.ts";
 
 /**
@@ -56,6 +57,14 @@ export class Finishes {
     return { ...snapshot, finish_epoch, panes: snapshot.panes.map((pane) => ({
       ...pane, finish_id: this.observe(pane.pane_id, pane.agent_status),
     })) };
+  }
+
+  /** The collector's authoritative recovery observations, before any pending refresh can finish. */
+  resync(completions: CompletionTracker, panes: readonly HerdrPane[], newer: ReadonlySet<string>): void {
+    completions.resync(panes, newer);
+    for (const pane of panes) if (!newer.has(pane.pane_id)) {
+      this.status(pane.pane_id, completions.current(pane.pane_id) ?? pane.agent_status);
+    }
   }
 
   /** Keep the counter if herdr reuses an ended pane's ID within this epoch. */

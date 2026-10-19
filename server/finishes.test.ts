@@ -7,6 +7,7 @@ import machines from "../site/demo/fixtures/machines.json";
 import { CompletionTracker } from "./completion.ts";
 import { Finishes, finishHerdrIdentity } from "./finishes.ts";
 import { LaunchedAgents } from "./launched-agents.ts";
+import { shownStatus } from "../src/lib/sidebarOrder.ts";
 
 function snapshot(status: AgentStatus): SessionSnapshot {
   const fixture = machines.machines[0]!.snapshot!;
@@ -37,6 +38,41 @@ it("counts only the post-launch status, not startup's raw WORKING and DONE", () 
   expect(finishes.status("p", launched.settle("p", "done", 103)).finish_id).toBe(1);
 });
 
+it("dates a resync-observed turn before a held refresh resolves over its completion", async () => {
+  const completions = new CompletionTracker();
+  const finishes = new Finishes(() => "daemon-a");
+  const report = (status: AgentStatus) => finishes.status("p", completions.observe("p", status, "codex"));
+  report("working");
+  const opened = report("done");
+  finishes.resync(completions, snapshot("working").panes, new Set());
+  const held = Promise.withResolvers<SessionSnapshot>();
+  const refresh = completions.readSnapshot(() => held.promise).then((read) => finishes.snapshot(read));
+  const next = report("done");
+  held.resolve(snapshot("working"));
+  const read = await refresh;
+  expect(next.finish_id).toBe(opened.finish_id + 1);
+  expect(read.panes[0]?.finish_id).toBe(next.finish_id);
+  expect(shownStatus(read.panes[0]!, { p: opened.finish_id })).toBe("done");
+});
+
+it("does not replay a stale resync WORKING over a pane in the newer exclusions", () => {
+  const completions = new CompletionTracker();
+  const finishes = new Finishes(() => "daemon-a");
+  const opened = finishes.status("p", completions.observe("p", "done", "codex"));
+  finishes.resync(completions, snapshot("working").panes, new Set(["p"]));
+  expect(finishes.status("p", completions.current("p")!)).toEqual(opened);
+});
+
+it("does not resurrect an excluded pane that ended while the resync read was pending", () => {
+  const completions = new CompletionTracker();
+  const finishes = new Finishes(() => "daemon-a");
+  const opened = finishes.status("p", completions.observe("p", "done", "codex"));
+  completions.forget("p");
+  finishes.ended("p");
+  finishes.resync(completions, snapshot("done").panes, new Set(["p"]));
+  expect(finishes.status("p", "working").finish_id).toBe(opened.finish_id);
+  expect(finishes.status("p", "done").finish_id).toBe(opened.finish_id + 1);
+});
 it("shares one counter between status frames and snapshots, including repeats and pane ID reuse", () => {
   const finishes = new Finishes(() => "daemon-a");
   finishes.status("p", "working");
