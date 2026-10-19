@@ -14,6 +14,9 @@ declare global {
     sidebarFixture: {
       finish(paneId: string, status: AgentStatus, seq: number): Promise<void>;
       zoom(paneId: string, focusedId: string): Promise<void>;
+      block(paneId: string, kind: "loading" | "failed" | "held" | "unattached" | "files"): void;
+      unblock(): void;
+      blockedReads: number;
     };
   }
 }
@@ -23,7 +26,7 @@ declare global {
 function installSidebarFixture(): void {
   const key = "sidebar-regression:roster";
   const stored = sessionStorage.getItem(key);
-  const state: { finishes: Record<string, { status: AgentStatus; seq: number }>; zoom: { paneId: string; focusedId: string } | null } =
+  const state: { finishes: Record<string, { status: AgentStatus; seq: number }>; zoom: { paneId: string; focusedId: string } | null; blocked?: { paneId: string; kind: string } } =
     stored ? JSON.parse(stored) : { finishes: {}, zoom: null };
   const sources = new Set<EventSource>();
   const patch = (machines: Machine[]): Machine[] => {
@@ -57,15 +60,47 @@ function installSidebarFixture(): void {
     return machines;
   };
   const fetchDemo = window.fetch;
+  const pendingReads: (() => void)[] = [];
   window.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const response = await fetchDemo(input, init);
     const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+    if (url.searchParams.get("pane_id") === state.blocked?.paneId) {
+      if (url.pathname === "/api/pane/conversation" && ["loading", "failed"].includes(state.blocked.kind)) {
+        window.sidebarFixture.blockedReads++;
+        if (state.blocked.kind === "loading") await new Promise<void>((resolve) => pendingReads.push(resolve));
+        else return Response.json({ error: { code: "fixture_failure", message: "Fixture conversation failed" } }, { status: 500 });
+      }
+      if (url.pathname === "/api/pane/files" && state.blocked.kind === "files") {
+        return Response.json({ error: { code: "fixture_failure", message: "Fixture suggestions failed" } }, { status: 500 });
+      }
+    }
     if (url.pathname === "/api/machines") {
       const body = await response.json();
       return Response.json({ ...body, machines: patch(body.machines) });
     }
     return response;
   }, fetchDemo);
+  const DemoSocket = window.WebSocket;
+  window.WebSocket = class extends DemoSocket {
+    constructor(url: string | URL, protocols?: string | string[]) {
+      super(url, protocols);
+      // The demo constructor returns its own EventTarget object, so wrap that instance's
+      // method instead of overriding a subclass prototype that the returned object never uses.
+      const send = this.send.bind(this);
+      this.send = (raw) => {
+        const message = JSON.parse(String(raw));
+        const blocked = state.blocked;
+        if (message.type === "attach" && blocked && message.pane_id === blocked.paneId
+          && ["held", "unattached"].includes(blocked.kind)) {
+          if (blocked.kind === "held") queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({
+            type: "error", pane_id: message.pane_id, code: "attach_held", message: "Fixture attach held",
+          }) })));
+          return;
+        }
+        send(raw);
+      };
+    }
+  };
   const DemoSource = window.EventSource;
   window.EventSource = class extends DemoSource {
     constructor(url: string | URL, init?: EventSourceInit) {
@@ -94,6 +129,9 @@ function installSidebarFixture(): void {
     for (const source of sources) source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machines", machines }) }));
   };
   window.sidebarFixture = {
+    blockedReads: 0,
+    block(paneId, kind) { state.blocked = { paneId, kind }; sessionStorage.setItem(key, JSON.stringify(state)); },
+    unblock() { delete state.blocked; sessionStorage.setItem(key, JSON.stringify(state)); for (const resolve of pendingReads.splice(0)) resolve(); },
     async finish(paneId, status, seq) { state.finishes[paneId] = { status, seq }; await publish(); },
     async zoom(paneId, focusedId) { state.zoom = { paneId, focusedId }; await publish(); },
   };
@@ -131,11 +169,21 @@ async function withPage(browser: Browser, settings: object, run: (page: Page) =>
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     // the shell pane is on screen, so the demo's own finish happens out of sight
-    await page.goto(`${url}?pane=${encodeURIComponent(panes.shell)}`);
-    await page.locator(".conn-live").waitFor({ state: "attached" });
-    await agents(page).first().waitFor({ state: "attached" });
-    await run(page);
-    assert.deepEqual(errors, []);
+    try {
+      await page.goto(`${url}?pane=${encodeURIComponent(panes.shell)}`);
+      await page.locator(".conn-live").waitFor({ state: "attached" });
+      await agents(page).first().waitFor({ state: "attached" });
+      await run(page);
+      assert.deepEqual(errors, []);
+    } catch (error) {
+      console.error("BROWSER_FIXTURE", errors, await page.locator("body").innerText());
+      const evidence = process.env["UI_EVIDENCE_DIR"];
+      if (evidence) {
+        mkdirSync(evidence, { recursive: true });
+        await page.screenshot({ path: join(evidence, "sidebar-failure.png") });
+      }
+      throw error;
+    }
   } finally {
     await context.close();
   }
@@ -167,6 +215,65 @@ try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       const finishCase = process.env["SIDEBAR_FINISH_CASE"];
+      for (const kind of ["crash", "loading", "failed", "refresh", "held", "unattached"] as const) {
+        if (finishCase && finishCase !== kind) continue;
+        await withPage(browser, {}, async (page) => {
+          const terminal = kind === "held" || kind === "unattached";
+          await page.evaluate(({ id, kind }) => {
+            if (kind !== "crash" && kind !== "refresh") window.sidebarFixture.block(id, kind);
+          }, { id: panes.omp, kind });
+          await page.goto(`${url}?pane=${encodeURIComponent(panes.omp)}&view=${terminal ? "terminal" : "chat"}${kind === "crash" ? "&crash=pane" : ""}`);
+          if (kind !== "crash") await page.locator(".conn-live").waitFor({ state: "attached" });
+          if (kind === "crash") await page.getByRole("alert").filter({ hasText: "This pane can't be shown." }).waitFor();
+          if (kind === "loading") await page.waitForFunction(() => window.sidebarFixture.blockedReads > 0);
+          if (kind === "failed") await page.locator(".chat-failure").waitFor();
+          if (kind === "held") await page.getByText("Another app has this pane open.", { exact: false }).first().waitFor();
+          if (kind === "refresh") {
+            await page.locator(".chat-turn").first().waitFor();
+            await page.evaluate((id) => window.sidebarFixture.block(id, "loading"), panes.omp);
+          }
+          await page.evaluate((id) => window.sidebarFixture.finish(id, "done", 101), panes.omp);
+          await waitStatus(page, INFRA, "done");
+          assert.equal(await page.evaluate((id) => Object.keys(localStorage).some((key) =>
+            key.startsWith("herdr-web-ui:finish:") && key.endsWith(`:${encodeURIComponent(id)}`)), panes.omp), false,
+          `${kind}: content not presented must leave no seen record`);
+          const evidence = process.env["UI_EVIDENCE_DIR"];
+          if (evidence) { mkdirSync(evidence, { recursive: true }); await page.screenshot({ path: join(evidence, `finish-${kind}.png`) }); }
+          if (kind === "loading" || kind === "failed" || kind === "refresh") {
+            await page.evaluate(() => window.sidebarFixture.unblock());
+            if (kind === "failed") await page.locator(".chat-failure-retry").click();
+            await waitStatus(page, INFRA, "idle");
+          }
+        });
+        console.log(`PASS ${kind}: only successfully presented content acknowledges the finish`);
+      }
+      for (const kind of ["composer", "composer-files-failed"] as const) {
+        if (finishCase && finishCase !== kind) continue;
+        await withPage(browser, {}, async (page) => {
+          await page.goto(`${url}?pane=${encodeURIComponent(panes.omp)}`);
+          await page.locator(".conn-live").waitFor({ state: "attached" });
+          const input = page.getByRole("textbox", { name: "Message", exact: true });
+          if (kind === "composer-files-failed") await page.evaluate((id) => window.sidebarFixture.block(id, "files"), panes.omp);
+          await input.fill(kind === "composer" ? "/" : "@missing");
+          await page.locator(".menu.composer-menu").waitFor();
+          await page.evaluate((id) => window.sidebarFixture.finish(id, "done", 101), panes.omp);
+          // The answer has actually arrived for this finish. Otherwise readiness alone could
+          // keep the dot briefly and let this test pass without the popup coverage gate.
+          await page.waitForFunction((id) => [...document.querySelectorAll("[data-pane-content]")].some((node) => {
+            const key = JSON.parse(node.getAttribute("data-pane-content") ?? "null");
+            return key?.[1] === id && key[5] === 101;
+          }), panes.omp);
+          await agent(page, INFRA).locator('.sidebar-status[data-status="done"]').waitFor({ state: "attached" });
+          assert.equal(await page.evaluate((id) => Object.keys(localStorage).some((key) =>
+            key.startsWith("herdr-web-ui:finish:") && key.endsWith(`:${encodeURIComponent(id)}`)), panes.omp), false);
+          const evidence = process.env["UI_EVIDENCE_DIR"];
+          if (evidence) { mkdirSync(evidence, { recursive: true }); await page.screenshot({ path: join(evidence, `finish-${kind}-phone.png`) }); }
+          await input.fill("");
+          await page.locator(".menu.composer-menu").waitFor({ state: "detached" });
+          await agent(page, INFRA).locator('.sidebar-status[data-status="idle"]').waitFor({ state: "attached" });
+        }, true);
+        console.log(`PASS ${kind}: a phone suggestion popup keeps its underlying finish unread`);
+      }
       if (!finishCase || finishCase === "drawer") {
         await withPage(browser, {}, async (page) => {
           await page.goto(`${url}?pane=${encodeURIComponent(panes.omp)}&sidebar=shown`);

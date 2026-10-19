@@ -119,6 +119,8 @@ const PROMPT_POLL_MS = 2000;
 const LOAD_OLDER_PX = 400;
 
 export interface ChatViewProps {
+  /** A fresh successful read for this displayed finish may acknowledge it. */
+  presentationKey?: string;
   paneId: string;
   /** Only the active pane owns the chat-local Mod+F shortcut. */
   active?: boolean;
@@ -804,7 +806,7 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, presentationKey, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
@@ -837,6 +839,8 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   const closeViewer = useCallback(() => setViewer(null), []);
   /** an answer for this pane arrived (or failed): until then, and while a replaced history is read again, an empty chat is only loading */
   const [loaded, setLoaded] = useState(false);
+  const presentationRef = useRef(presentationKey); presentationRef.current = presentationKey;
+  const [readPresentation, setReadPresentation] = useState<string>();
   const [prompt, setPrompt] = useState<InteractivePrompt | null>(null);
   // Each prompt that appears is an occurrence of its own, and gets a card of its own. The prompt's
   // id is a hash of what it says, so the same question asked twice shares it: the read below keeps
@@ -1005,6 +1009,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
       return before === held ? pages.flat() : null;
     };
     const read = async (): Promise<void> => {
+      const readKey = presentationRef.current;
       let generation = olderGeneration.current;
       try {
         let conversation;
@@ -1030,7 +1035,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
           pagingAway.current = false; stickToBottom.current = true; setNewMessages(false); setAway(false);
         }
         // a 304 hands back the answer already shown: nothing to compare or lay out again
-        if (conversation === lastAnswer.current) { setError(null); setErrorStatus(null); setFailures(0); return; }
+        if (conversation === lastAnswer.current) { setError(null); setErrorStatus(null); setFailures(0); setReadPresentation(readKey); return; }
         // The newest page moved past the held start: the turns in between join the older
         // pages and the newest page is held from its new start, so no poll reads more than a page.
         const previous = lastAnswer.current;
@@ -1066,6 +1071,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
           next = { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text).filter((message) => message.role !== "status"), truncated: result.truncated === true };
         }
         showAnswer(conversation, next);
+        setReadPresentation(readKey);
       } catch (cause) {
         if (cancelled || generation !== olderGeneration.current) return;
         setLoaded(true);
@@ -1090,7 +1096,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   // the answer in flight. The reader is installed before this effect requests its first read.
   useEffect(() => {
     if (visible) conversationRefresh.refresh();
-  }, [paneId, refreshKey, pollKey, visible, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, onConversationWatch, agent]);
+  }, [paneId, presentationKey, refreshKey, pollKey, visible, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, onConversationWatch, agent]);
 
   // Mount/visibility return already read immediately; only a changed push key invalidates.
   useEffect(() => {
@@ -1444,7 +1450,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   const renderTurn = useCallback((row: { key: string; turn: ConversationTurn }, index: number) => {
     const { turn } = row;
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
-    return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here. The terminal has it.")}</p>}>
+    return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error" data-pane-content-error>{t("This message can't be shown here. The terminal has it.")}</p>}>
       <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} userSkills={skillMatcher} />
     </RenderBoundary>;
   }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, skillMatcher]);
@@ -1505,7 +1511,8 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
   return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
-    <div className="chat-frame">
+    <div className="chat-frame" data-pane-content={active && visible && connected && !ended && loaded && error === null
+      && readPresentation === presentationKey && (state.source === "conversation" ? ChatTimeline !== null : agent === null) ? presentationKey : undefined}>
     <div className="chat-frame-body">
     {state.source === "conversation" ? ChatTimeline === null
       // its chunk is still loading: no turn is read until it arrives, so this is the loading state

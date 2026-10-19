@@ -974,20 +974,31 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   their most recent state change (herdr's `state_change_seq`, read from the snapshot's `agents`),
   within each PC, so the agent just worked in stays on top while it runs and after it finishes.
   It changes only the Agents list; herdr's order and the workspace rows stay as they are.
+  A raw counter rollback clears synthetic recency even on older bridges without an epoch.
+  This ordering correction never changes finish identities or read records.
 - A DONE opened here draws as ready in the Agents list and its workspace roll-up, as herdr's
   own client does. This follows the Codex app's [unread completion dot](https://github.com/openai/codex/issues/50856),
   but keeps read state browser-local rather than claiming cross-device acknowledgement. Only the
   selected pane actually rendered on a visible page counts. The drawer, Settings, New session,
-  Files, a popup file/diff viewer, machine dialogs, descendant dialogs and menus all block it,
+  Files, a popup file/diff viewer, machine dialogs, descendant dialogs and menus (including
+  composer slash/file suggestions and their failed-suggestions popup) all block it,
   on desktop too. A docked file/web panel does not cover the pane. A zoom redirect never
   acknowledges the hidden target; neither does the inactive half of a browser split. A background
   wait still shows BG, and working or blocked never draws ready.
+  The pane's content must also report readiness for its rendered lifetime. A terminal needs
+  parsed output for its current pane/terminal and an active, unheld connection. A native chat
+  needs a successful fresh read for the displayed finish and a loaded timeline, not just cached
+  turns or a loading/error placeholder. Error boundaries remove readiness with the subtree;
+  a failed message renderer also prevents acknowledgement. Agent scrollback fallbacks keep
+  the dot until the terminal is opened rather than claim native conversation readiness.
 - Each PC's bridge assigns `finish_id` after all status overrides, incrementing on each observed
   transition into DONE, not on herdr's `state_change_seq`. Snapshots and status events carry it.
+  Authoritative recovery observations feed the same tracker before the ensuing async refresh;
+  panes excluded as newer than the recovery read are left alone.
   A random `finish_epoch` changes when the web server starts or observes a replacement herdr
   socket (Windows: changed pid:start marker). A failed read or reconnect alone proves no restart.
   Events carry the epoch too: changing it invalidates other panes' cached finish IDs until their
-  next snapshot. The browser never infers a restart from counters. An older bridge missing either
+  next snapshot. The browser never infers a finish epoch from counters. An older bridge missing either
   field always keeps the dot; transitions wholly missed by the server cannot be counted.
 - Each `(PC, epoch, pane)` has its own `herdr-web-ui:finish:` localStorage key, containing the
   greatest viewed finish ID and its write time. Tabs writing different panes cannot overwrite

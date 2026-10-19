@@ -1,0 +1,17 @@
+import type { Machine } from "../../shared/machines.ts";
+import type { HerdrPane } from "../../shared/protocol.ts";
+import type { PaneView } from "./actions.ts";
+
+export const PANE_COVER_SELECTOR = '[role="dialog"],[role="alertdialog"],[aria-modal="true"],[role="menu"],dialog[open],.menu.composer-menu';
+
+/** A rendered content lifetime, not merely a selected pane slot. */
+export function paneContentKey(machine: Machine | undefined, pane: HerdrPane | null, view: PaneView): string | undefined {
+  return machine && pane ? JSON.stringify([machine.id, pane.pane_id, pane.terminal_id, view, machine.snapshot?.finish_epoch, pane.finish_id]) : undefined;
+}
+
+/** The marker lives on the successfully rendered content and disappears with its error boundary. */
+export function paneContentPresented(key: string | undefined): boolean {
+  if (key === undefined) return false;
+  return [...document.querySelectorAll("[data-pane-content]")].some((node) =>
+    node.getAttribute("data-pane-content") === key && !node.querySelector("[data-pane-content-error]"));
+}

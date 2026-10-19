@@ -8,6 +8,7 @@ import { alertPaneTitle, displayPaneTitle } from "./components/Sidebar.tsx";
 import { PaneCanvas } from "./components/PaneCanvas.tsx";
 import { MachineSessionsProvider } from "./lib/machineSessionContext.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
+import { PANE_COVER_SELECTOR, paneContentKey, paneContentPresented } from "./lib/panePresentation.ts";
 import { PANE_TABPANEL_ID, paneTabPanelLabel } from "./lib/paneRegion.ts";
 import { worktreeRepoName } from "./lib/composerStrip.ts";
 import { AccessGate } from "./components/AccessGate.tsx";
@@ -953,22 +954,6 @@ export function App() {
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;
   const selectedLayout = snapshot?.layouts.find((layout) => layout.tab_id === selectedPane?.tab_id);
-  // App-owned coverage, plus dialogs/menus mounted by descendants (rename, worktree, lightbox,
-  // confirmations). A desktop popup counts as covered too; docked file/web panels do not.
-  const coverSelector = '[role="dialog"],[role="alertdialog"],[aria-modal="true"],[role="menu"],dialog[open]';
-  const [dialogCover, setDialogCover] = useState(false);
-  useEffect(() => {
-    const update = () => setDialogCover(document.querySelector(coverSelector) !== null);
-    const observer = new MutationObserver(update);
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open", "role", "aria-modal"] });
-    update();
-    return () => observer.disconnect();
-  }, []);
-  const paneInFront = useCallback(() => locked === false && linkLanded && pendingFile.current === null && pendingCreate.current === null
-    && !drawerOpen && !settingsOpen && !newSessionOpen
-    && !filesOpen && !machineDialog && !paletteOpen && !diffViewing && !(viewing && !fileDocked)
-    && !dialogCover && document.querySelector(coverSelector) === null,
-  [locked, linkLanded, drawerOpen, settingsOpen, newSessionOpen, filesOpen, machineDialog, paletteOpen, diffViewing, viewing, fileDocked, dialogCover]);
   // Selection can precede rendering: in a zoomed tab the layout effect below redirects it,
   // but the sidebar's passive effect can still see that first selection. Only the selected
   // pane the canvas actually draws counts; paneInFront checks coverage at acknowledgement time.
@@ -1010,6 +995,28 @@ export function App() {
   // its lens picked by hand) the pane is back on the lens it had. A shell has no conversation to
   // show (storedView), so its alert opens its own lens; until the snapshot says, it counts as an agent
   if (notificationView !== null && !(notificationView === "chat" && selectedPane !== null && selectedAgent === null)) view = notificationView;
+
+  const contentKey = paneContentKey(selectedMachine, selectedPane, view);
+  // App-owned coverage, plus dialogs/menus mounted by descendants (rename, worktree, lightbox,
+  // confirmations). A desktop popup counts as covered too; docked file/web panels do not.
+  const [dialogCover, setDialogCover] = useState(false);
+  const [contentReady, setContentReady] = useState(false);
+  useEffect(() => {
+    const update = () => {
+      setDialogCover(document.querySelector(PANE_COVER_SELECTOR) !== null);
+      setContentReady(paneContentPresented(contentKey));
+    };
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open", "role", "aria-modal", "data-pane-content"] });
+    update();
+    return () => observer.disconnect();
+  }, [contentKey]);
+  const paneInFront = useCallback(() => locked === false && linkLanded && pendingFile.current === null && pendingCreate.current === null
+    && !drawerOpen && !settingsOpen && !newSessionOpen
+    && !filesOpen && !machineDialog && !paletteOpen && !diffViewing && !(viewing && !fileDocked)
+    && !dialogCover && document.querySelector(PANE_COVER_SELECTOR) === null
+    && contentReady && paneContentPresented(contentKey),
+  [locked, linkLanded, drawerOpen, settingsOpen, newSessionOpen, filesOpen, machineDialog, paletteOpen, diffViewing, viewing, fileDocked, dialogCover, contentReady, contentKey]);
 
   const pickView = useCallback((machineId: string, paneId: string, next: PaneView) => {
     const key = paneStorageId(machineId, paneId);
@@ -1754,6 +1761,7 @@ export function App() {
                     onOpenInHalf={wideScreen ? (id, side) => dockSide({ machineId, paneId: id }, side) : undefined}
                     renderPane={(item, itemActive, herdrSplit) => <OpenFileContext.Provider value={item ? (path) => openFile({ path, paneId: item.pane_id, machineId }) : null}>
                       <PaneTerminal
+                        presentationKey={paneContentKey(machine, item, item ? lensOf(item) : slotView)}
                         title={item ? displayPaneTitle(item) : active ? selectedTitle : null}
                         // Wait for the roster before attaching: the loading placeholder is replaced
                         // by the keyed tile, and must never claim the pane on a throwaway connection.

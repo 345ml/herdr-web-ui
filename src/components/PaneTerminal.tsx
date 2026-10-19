@@ -89,6 +89,8 @@ const plainError = (cause: unknown): string => {
 };
 
 export interface PaneTerminalProps {
+  /** App's content lifetime, including the current finish identity. */
+  presentationKey?: string;
   /** The pane this terminal attaches to; null renders the placeholder. */
   paneId: string | null;
   /** A restored pane keeps its ID but gets a new terminal after herdr restarts. */
@@ -155,6 +157,7 @@ export interface PaneTerminalProps {
 const heldRowNotes = new Map<string, { owner: string; id: string; text: string }>();
 
 export function PaneTerminal({
+  presentationKey,
   paneId,
   terminalId = null,
   mirrored = false,
@@ -265,6 +268,9 @@ export function PaneTerminal({
   /** The PC session's epoch: a receipt belongs to the connection on which its request left. */
   const pendingEpochRef = useRef(0);
   const [outputReady, setOutputReady] = useState(false);
+  const outputTarget = JSON.stringify([paneId, terminalId]);
+  const outputTargetRef = useRef(outputTarget); outputTargetRef.current = outputTarget;
+  const [parsedTarget, setParsedTarget] = useState<string>();
   const [ended, setEnded] = useState(false);
   const [inputError, setInputError] = useState<string | null>(null);
   const [inputReady, setInputReady] = useState(false);
@@ -1140,6 +1146,7 @@ export function PaneTerminal({
         const acknowledge = socket.outputAcknowledgement(message);
         const owner = message.pane_id;
         const generation = outputGeneration;
+        const target = outputTargetRef.current;
         term.write(message.data, () => {
           acknowledge?.();
           if (disposed) return;
@@ -1151,6 +1158,7 @@ export function PaneTerminal({
             return;
           }
           setOutputReady(true);
+          setParsedTarget(target);
           followCursor();
           const lines: string[] = [];
           const buffer = term.buffer.active;
@@ -1240,6 +1248,7 @@ export function PaneTerminal({
           if (message.pane_id !== undefined && message.pane_id !== paneRef.current) return;
           // not an end: the server attaches as soon as the other bridge lets go
           setHeld(true);
+          setOutputReady(false);
           term.options.disableStdin = true;
           setConnected(socket.connected);
           return;
@@ -2774,7 +2783,8 @@ export function PaneTerminal({
 
   return (
     // data-direct-typing: xterm's own field raises the soft keyboard here (lib/viewport.ts)
-    <div ref={stackRef} className={`terminal-stack${chatView ? " is-chat" : ""}${greeted ? " is-greeted" : ""}`} data-pane-owner={paneId === null ? undefined : paneStorageId(machineId, paneId)} data-direct-typing={coarse && directTyping && !chatView ? "" : undefined}>
+    <div ref={stackRef} className={`terminal-stack${chatView ? " is-chat" : ""}${greeted ? " is-greeted" : ""}`} data-pane-owner={paneId === null ? undefined : paneStorageId(machineId, paneId)} data-direct-typing={coarse && directTyping && !chatView ? "" : undefined}
+      data-pane-content={!chatView && paneId !== null && active && presented && shown && connected && outputReady && parsedTarget === outputTarget && !held && !ended && !released && !unsupported && !outputError ? presentationKey : undefined}>
       {paneId === null && restoreError !== null && (
         <div className="terminal-placeholder is-restore-error" role="status">
           <div className="terminal-placeholder-inner">
@@ -2909,6 +2919,7 @@ export function PaneTerminal({
               The session herdr reports is left out of the key: it can change while the
               conversation stays (a shared Codex daemon), and the chat follows history_id itself */}
           <ChatView
+            presentationKey={presentationKey}
             key={paneId}
             paneId={paneId}
             active={active}
