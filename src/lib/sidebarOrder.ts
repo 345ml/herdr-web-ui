@@ -31,11 +31,11 @@ export function stateSeqs(snapshot: Pick<SessionSnapshot, "agents"> | null | und
  * What `liveSeqs` remembers between snapshots: each pane's last status, the changes it dated
  * itself (`bumped`), and for each pane the last stand-in herdr's own counter replaced
  * (`promoted`, stand-in → counter), so a record made at the stand-in can follow it (`carrySeen`),
- * herdr's own counter per pane at the last call (`real`), and how many herdr restarts it noticed
- * (`restarts`).
+ * the only real counter that could prove a pending transition (`carryable`), herdr's own counter
+ * per pane at the last call (`real`), and how many herdr restarts it noticed (`restarts`).
  */
-export interface SeqMemory { status: Map<string, unknown>; bumped: Map<string, number>; promoted: Map<string, { from: number; to: number }>; real: Map<string, number>; restarts: number }
-export const newSeqMemory = (): SeqMemory => ({ status: new Map(), bumped: new Map(), promoted: new Map(), real: new Map(), restarts: 0 });
+export interface SeqMemory { status: Map<string, unknown>; bumped: Map<string, number>; carryable: Map<string, number>; promoted: Map<string, { from: number; to: number }>; real: Map<string, number>; restarts: number }
+export const newSeqMemory = (): SeqMemory => ({ status: new Map(), bumped: new Map(), carryable: new Map(), promoted: new Map(), real: new Map(), restarts: 0 });
 
 /**
  * `stateSeqs`, kept in step with pushed statuses. A pane-status push lands in the snapshot at once
@@ -43,16 +43,22 @@ export const newSeqMemory = (): SeqMemory => ({ status: new Map(), bumped: new M
  * pane sent a message would sit in its old place, and a finish seen through that gap would count as
  * viewed at the old counter. So a status that changed since the last call is dated now, just above
  * every counter known; herdr's own counter for that change is higher and takes over when it comes,
- * and the swap is kept in `memory.promoted`. A change that arrives with a new counter of herdr's (a
+ * and an unambiguous swap is kept in `memory.promoted`. A gap in the event stream or PC connection
+ * drops carry candidates, but keeps stand-ins for ordering. A change that arrives with a new counter of herdr's (a
  * roster read that saw it first) keeps that counter, so herdr's order between changes stands, and
  * drops the pane's earlier stand-in, which dated an older change. A counter that went back means
  * herdr restarted: every stand-in is dropped and `memory.restarts` goes up. Mutates `memory`.
  */
-export function liveSeqs(snapshot: Pick<SessionSnapshot, "agents" | "panes"> | null | undefined, memory: SeqMemory): Map<string, number> {
+export function liveSeqs(snapshot: Pick<SessionSnapshot, "agents" | "panes"> | null | undefined, memory: SeqMemory, continuous = true): Map<string, number> {
   const seqs = stateSeqs(snapshot);
   const panes = snapshot?.panes ?? [];
+  if (!continuous) {
+    memory.carryable.clear();
+    memory.promoted.clear();
+  }
   if ([...seqs].some(([id, real]) => real < (memory.real.get(id) ?? real))) {
     memory.bumped.clear();
+    memory.carryable.clear();
     memory.promoted.clear();
     memory.restarts++;
   }
@@ -62,10 +68,19 @@ export function liveSeqs(snapshot: Pick<SessionSnapshot, "agents" | "panes"> | n
     const real = seqs.get(pane.pane_id);
     const before = memory.real.get(pane.pane_id);
     if (changed && real !== undefined) {
-      if (before !== undefined && real <= before) memory.bumped.set(pane.pane_id, top += 0.001);
+      if (before !== undefined && real <= before) {
+        // Only the first transition above a known session counter can be identified without
+        // replay history: if herdr later gives it exactly top + 1, no turn fits in between.
+        // Multiple pending transitions or a larger advance are ambiguous; keep their order,
+        // but never move a look onto a completion the browser may not have seen.
+        memory.carryable.delete(pane.pane_id);
+        if (continuous && Number.isInteger(top)) memory.carryable.set(pane.pane_id, top + 1);
+        memory.bumped.set(pane.pane_id, top += 0.001);
+      }
       else {
         // herdr's counter moved with the change: it dates it, and a stand-in from before is stale
         memory.bumped.delete(pane.pane_id);
+        memory.carryable.delete(pane.pane_id);
         memory.promoted.delete(pane.pane_id);
       }
     }
@@ -80,8 +95,14 @@ export function liveSeqs(snapshot: Pick<SessionSnapshot, "agents" | "panes"> | n
   }
   for (const [id, bump] of memory.bumped) {
     const real = seqs.get(id);
-    if (real !== undefined && real > bump) memory.promoted.set(id, { from: bump, to: real });
-    if (real === undefined || real > bump) memory.bumped.delete(id);
+    if (real !== undefined && real > bump) {
+      memory.promoted.delete(id);
+      if (memory.carryable.get(id) === real) memory.promoted.set(id, { from: bump, to: real });
+    }
+    if (real === undefined || real > bump) {
+      memory.bumped.delete(id);
+      memory.carryable.delete(id);
+    }
     else seqs.set(id, bump);
   }
   return seqs;
@@ -126,16 +147,16 @@ export function carrySeen(record: SeenRecord, promoted: ReadonlyMap<string, { fr
  * counter keeps the pane's last counter from `stored` (or nothing) until `carrySeen` has moved it
  * onto herdr's. A new page starts with no `SeqMemory.promoted`, so a stand-in read back from
  * storage could never be carried, and would leave the finish marked anyway; this way the
- * record on disk never holds a value herdr did not give.
+ * record on disk never holds a value herdr did not give. Merge the latest stored marks from other
+ * tabs, keeping the newer counter for a shared pane; the caller prunes closed panes afterwards.
  */
 export function persistableSeen(record: SeenRecord, stored: SeenRecord | null): SeenRecord {
-  if (Object.values(record).every(Number.isInteger)) return record;
-  const next: Record<string, number> = {};
+  const next: Record<string, number> = Object.fromEntries(Object.entries(stored ?? {})
+    .filter(([, at]) => Number.isSafeInteger(at) && at >= 0));
   for (const [id, at] of Object.entries(record)) {
-    if (Number.isInteger(at)) next[id] = at;
-    else if (stored && Number.isInteger(stored[id])) next[id] = stored[id]!;
+    if (Number.isSafeInteger(at) && at >= 0) next[id] = Math.max(at, next[id] ?? 0);
   }
-  return next;
+  return Object.keys(next).length === Object.keys(record).length && Object.entries(next).every(([id, at]) => record[id] === at) ? record : next;
 }
 
 /**
@@ -158,8 +179,12 @@ export function pruneSeen(record: SeenRecord, panes: readonly Pick<PaneInfo, "pa
  * was last kept at): none of it. `pruneSeen` drops only entries above a pane's new counter, and one
  * that happens to equal it would mark a finish of the new session as looked at (#591).
  */
-export function seenAfterRestart(record: SeenRecord, restarts: number, handled: number): SeenRecord {
-  return restarts > handled && Object.keys(record).length > 0 ? {} : record;
+export function seenAfterRestart(record: SeenRecord, restarts: number, handled: number, real: ReadonlyMap<string, number> = new Map()): SeenRecord {
+  // A fresh page has no earlier SeqMemory. A stored integer above a live counter proves that
+  // the whole PC record predates a restart, including entries that happen to equal new ones.
+  // Stand-ins are deliberately above real counters, so they cannot prove a rollback.
+  const rolledBack = Object.entries(record).some(([id, at]) => Number.isSafeInteger(at) && at > (real.get(id) ?? Infinity));
+  return (restarts > handled || rolledBack) && Object.keys(record).length > 0 ? {} : record;
 }
 
 /**

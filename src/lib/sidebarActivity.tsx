@@ -22,13 +22,18 @@ const SidebarActivityContext = createContext<SidebarActivity>({ seqs: () => NO_S
 export const SidebarActivityProvider = SidebarActivityContext.Provider;
 export const useSidebarActivity = (): SidebarActivity => useContext(SidebarActivityContext);
 
-export function useSidebarActivityState(machines: readonly Machine[], selectedMachineId: string, selectedPaneId: string | null): SidebarActivity {
+export function useSidebarActivityState(machines: readonly Machine[], selectedMachineId: string, presentedPaneId: string | null, eventEpoch = 0): SidebarActivity {
   const memories = useRef(new Map<string, SeqMemory>());
-  const seqsByMachine = useMemo(() => new Map(machines.map((machine) => {
-    let memory = memories.current.get(machine.id);
-    if (!memory) memories.current.set(machine.id, memory = newSeqMemory());
-    return [machine.id, liveSeqs(machine.snapshot, memory)] as const;
-  })), [machines]);
+  const previousEpoch = useRef(eventEpoch);
+  const seqsByMachine = useMemo(() => {
+    const continuous = previousEpoch.current === eventEpoch;
+    previousEpoch.current = eventEpoch;
+    return new Map(machines.map((machine) => {
+      let memory = memories.current.get(machine.id);
+      if (!memory) memories.current.set(machine.id, memory = newSeqMemory());
+      return [machine.id, liveSeqs(machine.snapshot, memory, continuous && machine.state === "connected")] as const;
+    }));
+  }, [machines, eventEpoch]);
 
   // The pane on screen, while the page is visible, is looked at at its current counter (#1279: herdr
   // keeps DONE until one of its own clients shows the pane). A PC with no record yet starts with
@@ -47,35 +52,45 @@ export function useSidebarActivityState(machines: readonly Machine[], selectedMa
     const handled = new Map(restartsHandled.current);
     const restarts = new Map(machines.map((machine) => [machine.id, memories.current.get(machine.id)?.restarts ?? 0]));
     for (const machine of machines) {
-      if (!machine.snapshot || machine.state !== "connected") continue;
+      if (!machine.snapshot?.panes.length || machine.state !== "connected") continue;
       // the stored record goes too, or persistableSeen would bring an old counter back for a look
       // recorded at a stand-in after the restart
-      if (restarts.get(machine.id)! > (handled.get(machine.id) ?? 0)) saveSeen(machine.id, {});
+      const stored = loadSeen(machine.id);
+      const loadedReal = seen.has(machine.id) ? NO_SEQS : memories.current.get(machine.id)?.real;
+      if (stored && seenAfterRestart(stored, restarts.get(machine.id)!, handled.get(machine.id) ?? 0, loadedReal) !== stored) saveSeen(machine.id, {});
       restartsHandled.current.set(machine.id, restarts.get(machine.id)!);
     }
     setSeen((current) => {
       let next: Map<string, SeenRecord> | null = null;
       for (const machine of machines) {
         // a PC that is away keeps its record: its saved roster says nothing new
-        if (!machine.snapshot || machine.state !== "connected") continue;
+        if (!machine.snapshot?.panes.length || machine.state !== "connected") continue;
         const seqs = seqsByMachine.get(machine.id) ?? NO_SEQS;
         const before = current.get(machine.id);
         // after a herdr restart the whole record is from the earlier session, in storage too (#591)
         const kept = before ?? loadSeen(machine.id);
-        let record = kept ? seenAfterRestart(kept, restarts.get(machine.id)!, handled.get(machine.id) ?? 0) : {};
+        let record = kept ? seenAfterRestart(kept, restarts.get(machine.id)!, handled.get(machine.id) ?? 0, before ? NO_SEQS : memories.current.get(machine.id)?.real) : {};
         // a look recorded at a stand-in counter follows it to herdr's own (lib/sidebarOrder.ts carrySeen)
         record = carrySeen(record, memories.current.get(machine.id)?.promoted ?? new Map());
-        const seq = machine.id === selectedMachineId && selectedPaneId && pageVisible ? seqs.get(selectedPaneId) : undefined;
-        if (selectedPaneId && seq !== undefined) record = markSeen(record, selectedPaneId, seq);
+        const seq = machine.id === selectedMachineId && presentedPaneId && pageVisible ? seqs.get(presentedPaneId) : undefined;
+        if (presentedPaneId && seq !== undefined) record = markSeen(record, presentedPaneId, seq);
         record = pruneSeen(record, machine.snapshot.panes, seqs);
         if (record !== before) (next ??= new Map(current)).set(machine.id, record);
       }
       return next ?? current;
     });
-  }, [machines, seqsByMachine, selectedMachineId, selectedPaneId, pageVisible]);
+  }, [machines, seqsByMachine, selectedMachineId, presentedPaneId, pageVisible]);
   useEffect(() => {
     // storage gets herdr's counters only: a stand-in waits in memory until it is carried (persistableSeen)
-    for (const [machineId, record] of seen) saveSeen(machineId, persistableSeen(record, loadSeen(machineId)));
+    for (const [machineId, record] of seen) {
+      const machine = machines.find((machine) => machine.id === machineId);
+      if (!machine) continue;
+      const merged = persistableSeen(record, loadSeen(machineId));
+      // Our record was already checked for rollback and pruned. Another mounted tab may have
+      // a newer roster: do not discard its marks merely because this tab's counters lag.
+      saveSeen(machineId, machine.state === "connected" && machine.snapshot
+        ? pruneSeen(merged, machine.snapshot.panes) : merged);
+    }
   }, [seen]);
   // a removed PC takes its record with it; an empty roster is one still loading
   useEffect(() => {

@@ -63,6 +63,27 @@ describe("live counters", () => {
     expect(persistableSeen(integers, { a: 5 })).toBe(integers);
   });
 
+  it("does not carry a seen stand-in over an ambiguous advance to another DONE", () => {
+    const memory = newSeqMemory();
+    liveSeqs(snap({ a: "working", b: "done" }, { a: 5, b: 9 }), memory);
+    const pushed = liveSeqs(snap({ a: "done", b: "done" }, { a: 5, b: 9 }), memory);
+    const seen = markSeen({}, "a", pushed.get("a")!);
+    expect(seen).toEqual({ a: 9.001 });
+    // The client left A, then missed WORKING@11 and DONE@12. An unchanged status is not proof.
+    const read = liveSeqs(snap({ a: "done", b: "done" }, { a: 12, b: 9 }), memory);
+    expect(shownStatus(pane("a", "done"), read, carrySeen(seen, memory.promoted))).toBe("done");
+  });
+
+  it("does not treat the first possible counter as a later observed transition", () => {
+    const memory = newSeqMemory();
+    liveSeqs(snap({ a: "idle", b: "done" }, { a: 5, b: 9 }), memory);
+    liveSeqs(snap({ a: "working", b: "done" }, { a: 5, b: 9 }), memory);
+    const finished = liveSeqs(snap({ a: "done", b: "done" }, { a: 5, b: 9 }), memory);
+    const seen = markSeen({}, "a", finished.get("a")!);
+    const read = liveSeqs(snap({ a: "done", b: "done" }, { a: 10, b: 9 }), memory);
+    expect(shownStatus(pane("a", "done"), read, carrySeen(seen, memory.promoted))).toBe("done");
+  });
+
   it("errs toward the dot after a reload inside the poll window (#529 review)", () => {
     // a finish watched (recorded at the stand-in), another pane opened, the page reloaded before
     // the roster read: storage holds the last real counter, a new page has no promoted map
@@ -208,6 +229,16 @@ describe("opened finishes", () => {
     liveSeqs(roster({ a: 2, b: 1 }), memory);
     expect(seenAfterRestart(kept, memory.restarts, memory.restarts)).toBe(kept);
   });
+
+  it("invalidates a loaded record before pruning away the evidence of a closed-page restart", () => {
+    const stored = { a: 2, b: 100 };
+    const live = new Map([["a", 2], ["b", 1]]);
+    const record = seenAfterRestart(stored, 0, 0, live);
+    expect(record).toEqual({});
+    expect(shownStatus(pane("a", "done"), live, record)).toBe("done");
+    expect(shownStatus(pane("b", "done"), live, record)).toBe("done");
+    expect(seenAfterRestart(stored, 0, 0, new Map([["a", 2]]))).toBe(stored);
+  });
 });
 
 it("defaults to herdr's order, and accepts only known values", () => {
@@ -241,6 +272,12 @@ describe("records in storage", () => {
     expect(loadSeen("box")).toBeNull();
     expect(loadSeen("local")).toEqual({ a: 3 });
     expect(data.has("herdr-web-ui:settings")).toBe(true);
+  });
+
+  it("merges another tab's records and never replaces its newer counter with an older look", () => {
+    expect(persistableSeen({ a: 1 }, { b: 2 })).toEqual({ a: 1, b: 2 });
+    expect(persistableSeen({ a: 1, b: 3 }, { a: 4, c: 5 })).toEqual({ a: 4, b: 3, c: 5 });
+    expect(persistableSeen({ a: 9.001 }, { a: 5, b: 6 })).toEqual({ a: 5, b: 6 });
   });
 
   it("reads a damaged record as none, keeping only numbers", () => {

@@ -339,6 +339,8 @@ export function App() {
   // a phone opened by a link that says so starts with its drawer out (lib/deepLink.ts)
   const [drawerOpen, setDrawerOpen] = useState(() => initialLink?.sidebar === "shown" && window.matchMedia?.("(min-width: 769px)").matches !== true);
   const drawerOpenRef = useRef(drawerOpen); drawerOpenRef.current = drawerOpen;
+  // SSE reconnects do not replay missed statuses, even when the PC itself stayed connected.
+  const [sidebarEventEpoch, setSidebarEventEpoch] = useState(0);
   // from 769px the drawer is a plain sidebar column and its toggle is hidden, so a drawer a
   // narrow window opened must not come back (with its scrim) the next time the window narrows
   const wideScreen = useMediaQuery("(min-width: 769px)");
@@ -665,6 +667,8 @@ export function App() {
       snapshot: machine.snapshot && { panes: machine.snapshot.panes.map((pane) => ({ pane_id: pane.pane_id, agent_status: alertStatus(pane.agent_status, (pane as HerdrPane).background_wait) })) },
     }));
     const events = new EventSource("/api/machines/events");
+    setSidebarEventEpoch((epoch) => epoch + 1);
+    events.onerror = () => setSidebarEventEpoch((epoch) => epoch + 1);
     events.onmessage = (event) => {
       let payload: MachineEvent;
       try { payload = JSON.parse(event.data); } catch { return; }
@@ -951,6 +955,13 @@ export function App() {
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;
   const selectedLayout = snapshot?.layouts.find((layout) => layout.tab_id === selectedPane?.tab_id);
+  // Selection can precede rendering: in a zoomed tab the layout effect below redirects it,
+  // but the sidebar's passive effect can still see that first selection. Only the selected
+  // pane the canvas actually draws, uncovered by the phone drawer, counts as opened here.
+  const presentedPaneId = !drawerOpen && selectedPane
+    && (!selectedLayout?.panes.length || selectedLayout.panes.some((pane) => pane.pane_id === selectedPane.pane_id))
+    && (!selectedLayout?.zoomed || selectedLayout.focused_pane_id === selectedPane.pane_id)
+    ? selectedPane.pane_id : null;
   useLayoutEffect(() => {
     if (selectedLayout?.zoomed && selectedLayout.focused_pane_id !== selectedPaneId
       && snapshot?.panes.some((pane) => pane.pane_id === selectedLayout.focused_pane_id)) {
@@ -1626,7 +1637,7 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
+            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} presentedPaneId={presentedPaneId} eventEpoch={sidebarEventEpoch} actions={actions} onSelect={selectTarget} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>

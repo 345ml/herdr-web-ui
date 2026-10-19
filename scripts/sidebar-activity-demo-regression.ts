@@ -6,6 +6,92 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
+import type { Machine } from "../shared/machines.ts";
+import type { AgentStatus } from "../shared/protocol.ts";
+
+declare global {
+  interface Window {
+    sidebarFixture: {
+      finish(paneId: string, status: AgentStatus, seq: number): Promise<void>;
+      zoom(paneId: string, focusedId: string): Promise<void>;
+    };
+  }
+}
+
+// Test-owned roster overrides survive a reload, unlike the demo's module-local state.
+// Both HTTP reads and SSE rosters carry them; the app and its storage code stay unmodified.
+function installSidebarFixture(): void {
+  const key = "sidebar-regression:roster";
+  const stored = sessionStorage.getItem(key);
+  const state: { finishes: Record<string, { status: AgentStatus; seq: number }>; zoom: { paneId: string; focusedId: string } | null } =
+    stored ? JSON.parse(stored) : { finishes: {}, zoom: null };
+  const sources = new Set<EventSource>();
+  const patch = (machines: Machine[]): Machine[] => {
+    for (const machine of machines) {
+      const snapshot = machine.snapshot;
+      if (!snapshot) continue;
+      for (const pane of snapshot.panes) {
+        const finish = state.finishes[pane.pane_id];
+        if (finish) pane.agent_status = finish.status;
+      }
+      for (const agent of snapshot.agents) {
+        const finish = state.finishes[agent.pane_id];
+        if (finish) { agent.agent_status = finish.status; agent.state_change_seq = finish.seq; }
+      }
+      if (state.zoom) {
+        const target = snapshot.panes.find((pane) => pane.pane_id === state.zoom?.paneId);
+        const focused = snapshot.panes.find((pane) => pane.pane_id === state.zoom?.focusedId);
+        const layout = snapshot.layouts.find((item) => item.tab_id === focused?.tab_id);
+        if (target && focused && layout) {
+          target.workspace_id = focused.workspace_id;
+          target.tab_id = focused.tab_id;
+          layout.zoomed = true;
+          layout.focused_pane_id = focused.pane_id;
+          if (!layout.panes.some((pane) => pane.pane_id === target.pane_id)) {
+            layout.panes.push({ pane_id: target.pane_id, focused: false, rect: { ...layout.area } });
+          }
+        }
+      }
+    }
+    return machines;
+  };
+  const fetchDemo = window.fetch;
+  window.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const response = await fetchDemo(input, init);
+    const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+    if (url.pathname === "/api/machines") {
+      const body = await response.json();
+      return Response.json({ ...body, machines: patch(body.machines) });
+    }
+    return response;
+  }, fetchDemo);
+  const DemoSource = window.EventSource;
+  window.EventSource = class extends DemoSource {
+    constructor(url: string | URL, init?: EventSourceInit) {
+      super(url, init);
+      sources.add(this);
+      let receive: EventSource["onmessage"] = null;
+      Object.defineProperty(this, "onmessage", {
+        get: () => (event: MessageEvent<string>) => {
+          const body = JSON.parse(event.data);
+          if (body.type === "machines") body.machines = patch(body.machines);
+          receive?.call(this, new MessageEvent("message", { data: JSON.stringify(body) }));
+        },
+        set: (handler: EventSource["onmessage"]) => { receive = handler; },
+      });
+    }
+    close(): void { sources.delete(this); super.close(); }
+  };
+  const publish = async (): Promise<void> => {
+    sessionStorage.setItem(key, JSON.stringify(state));
+    const { machines } = await (await fetch("/api/machines")).json();
+    for (const source of sources) source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machines", machines }) }));
+  };
+  window.sidebarFixture = {
+    async finish(paneId, status, seq) { state.finishes[paneId] = { status, seq }; await publish(); },
+    async zoom(paneId, focusedId) { state.zoom = { paneId, focusedId }; await publish(); },
+  };
+}
 
 // Settings → Agents order (Activity) and the Agents list's pins, on the unmodified app over the
 // demo's fixture transport, whose agents carry herdr's state_change_seq and bump it on every state
@@ -22,7 +108,6 @@ const AGENTS_HERDR_ORDER = [API, WEB, "Fix the flaky retry test", INFRA, "Ship t
 const agents = (page: Page) => page.locator(".agents-sidebar .agent-item");
 const agentTitles = (page: Page) => agents(page).locator(".agent-title").allTextContents();
 const agent = (page: Page, title: string) => agents(page).filter({ has: page.locator(".agent-title", { hasText: title }) });
-const agentStatus = (page: Page, title: string) => agent(page, title).locator(".sidebar-status").getAttribute("data-status");
 const waitStatus = (page: Page, title: string, status: string) => agent(page, title).locator(`.sidebar-status[data-status="${status}"]`).waitFor({ timeout: 10_000 });
 const waitAgentAt = (page: Page, index: number, title: string) => page.waitForFunction(([at, name]) =>
   [...document.querySelectorAll(".agents-sidebar .agent-item .agent-title")][at as number]?.textContent === name, [index, title] as const, { timeout: 5_000 });
@@ -56,7 +141,8 @@ try {
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
   assert.match(html, /<script type="module"/);
-  writeFileSync(index, html.replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script type="module"'));
+  writeFileSync(join(app, "sidebar-fixture.js"), `(${installSidebarFixture.toString()})();`);
+  writeFileSync(index, html.replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script src="./sidebar-fixture.js"></script>\n    <script type="module"'));
 
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
@@ -74,6 +160,80 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
+      const finishCase = process.env["SIDEBAR_FINISH_CASE"];
+      if (!finishCase || finishCase === "drawer") {
+        await withPage(browser, {}, async (page) => {
+          await page.goto(`${url}?pane=${encodeURIComponent(panes.omp)}&sidebar=shown`);
+          await page.locator(".sidebar.is-open").waitFor();
+          await page.locator(".agents-sidebar .agent-section-toggle").tap();
+          await page.evaluate((id) => window.sidebarFixture.finish(id, "working", 100), panes.omp);
+          await waitStatus(page, INFRA, "working");
+          await page.evaluate((id) => window.sidebarFixture.finish(id, "done", 101), panes.omp);
+          await waitStatus(page, INFRA, "done");
+          assert.equal(await page.locator(`.workspace-select[data-pane="${panes.omp}"] .sidebar-status`).getAttribute("data-status"), "done",
+            "a finish behind the phone drawer stays unread in the workspace roll-up");
+          assert.equal(await page.locator(".sidebar.is-open").count(), 1);
+          const evidence = process.env["UI_EVIDENCE_DIR"];
+          if (evidence) {
+            mkdirSync(evidence, { recursive: true });
+            await page.screenshot({ path: join(evidence, "finish-drawer-phone.png") });
+          }
+          await page.locator('button[aria-controls="workspace-drawer"]').tap();
+          await agent(page, INFRA).locator('.sidebar-status[data-status="idle"]').waitFor({ state: "attached" });
+        }, true);
+        console.log("PASS a phone drawer covering the selected pane preserves both DONE dots until uncovered");
+      }
+      if (!finishCase || finishCase === "zoom") {
+        await withPage(browser, {}, async (page) => {
+          await page.evaluate(async ({ hidden, focused }) => {
+            await window.sidebarFixture.finish(hidden, "done", 100);
+            await window.sidebarFixture.zoom(hidden, focused);
+          }, { hidden: panes.omp, focused: panes.api });
+          await page.goto(`${url}?pane=${encodeURIComponent(panes.omp)}`);
+          await page.locator(`[data-layout-pane="${panes.api}"]:not(.is-hidden)`).waitFor();
+          await page.waitForFunction((id) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === id, panes.api);
+          assert.equal(await page.locator(`[data-layout-pane="${panes.omp}"].is-hidden`).count(), 1);
+          await waitStatus(page, INFRA, "done");
+          const record = await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:seen:local") ?? "{}"));
+          assert.equal(record[panes.omp], undefined, "a redirected deep link never acknowledges the hidden pane");
+        });
+        console.log("PASS a deep link into a zoomed tab acknowledges only the presented pane");
+      }
+      if (!finishCase || finishCase === "reload") {
+        await withPage(browser, {}, async (page) => {
+          await page.evaluate(async ({ opened, unread }) => {
+            await window.sidebarFixture.finish(opened, "done", 100);
+            await window.sidebarFixture.finish(unread, "done", 100);
+          }, { opened: panes.omp, unread: panes.api });
+          await waitStatus(page, INFRA, "done");
+          await agent(page, INFRA).locator(".agent-select").click();
+          await waitStatus(page, INFRA, "idle");
+          await page.locator(`.workspace-select[data-pane="${panes.hermes}"]`).click();
+          await page.waitForFunction((id) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === id, panes.hermes);
+          await waitStatus(page, INFRA, "idle");
+          await waitStatus(page, API, "done");
+          await page.reload();
+          await page.locator(".conn-live").waitFor({ state: "attached" });
+          const raw = await page.evaluate(async (ids) => {
+            const { machines } = await (await fetch("/api/machines")).json() as { machines: Machine[] };
+            return machines[0]?.snapshot?.agents.filter((agent) => ids.includes(agent.pane_id))
+              .map((agent) => [agent.pane_id, agent.agent_status, agent.state_change_seq]);
+          }, [panes.omp, panes.api]);
+          assert.deepEqual(raw?.sort(), [[panes.omp, "done", 100], [panes.api, "done", 100]].sort(),
+            "reload preserves the same raw DONE and counter for both the opened pane and unread control");
+          await waitStatus(page, INFRA, "idle");
+          await waitStatus(page, API, "done");
+          assert.equal(await agent(page, INFRA).locator(".agent-select").getAttribute("aria-current"), null,
+            "reload does not reopen the finish to acknowledge it again");
+          // A storage-loss control proves READY above came from the record, not the demo or selection.
+          await page.evaluate(() => localStorage.removeItem("herdr-web-ui:seen:local"));
+          await page.reload();
+          await waitStatus(page, INFRA, "done");
+          await waitStatus(page, API, "done");
+        });
+        console.log("PASS switching and reload preserve a read raw DONE; losing storage restores its dot");
+      }
+      if (!finishCase) {
       // Workspace menus no longer mix in pane operations; header More keeps pane movement.
       // herdr's order in a flat list, each row naming its own workspace, with its row and its ⋯
       await withPage(browser, {}, async (page) => {
@@ -326,10 +486,7 @@ try {
         await waitStatus(page, INFRA, "idle");
         assert.equal((await agentTitles(page))[1], INFRA, "reading a finish does not move it");
         await page.locator(".machine-workspaces .workspace-select", { hasText: "flaky-retry-test" }).first().click();
-        await page.reload();
-        await page.locator(".conn-live").waitFor({ state: "attached" });
-        await agents(page).first().waitFor({ state: "attached" });
-        assert.equal(await agentStatus(page, INFRA), "idle", "a finish read here stays read after a reload");
+        await waitStatus(page, INFRA, "idle");
         // a later finish not looked at gets its dot again
         await agent(page, INFRA).locator(".agent-select").click();
         await page.locator(".composer-text").fill("One more check");
@@ -338,7 +495,7 @@ try {
         await page.locator(".machine-workspaces .workspace-select", { hasText: "flaky-retry-test" }).first().click();
         await waitStatus(page, INFRA, "done");
       });
-      console.log("PASS Activity pins blocked and follows recency; an opened DONE reads as ready, through a reload, until the next finish");
+      console.log("PASS Activity pins blocked and follows recency; an opened DONE reads as ready after switching until the next finish");
 
       // the demo keeps its agent template after its last agent closes (#529 review): a workspace
       // made in an emptied demo still lists its agent with herdr's counter
@@ -355,6 +512,7 @@ try {
         await agent(page, "fresh").waitFor();
       });
       console.log("PASS a workspace made after the demo's last agent closed is listed with herdr's counter");
+      }
     } finally {
       await browser.close();
     }
