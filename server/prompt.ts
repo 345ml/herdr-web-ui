@@ -257,6 +257,8 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   // above whatever came after, which is what keeps this window narrow.
   if (prompt.responder === "pi-model") return hintAtEnd(shown, PI_MODEL_HINT_AT_END_RE, PI_FOOTER_LINES);
   if (prompt.responder === "omo-model") return omoModelListWaits(screen);
+  // its reader already found the picker ending the screen, which only an open picker does
+  if (prompt.responder === "omp-model") return true;
   if (prompt.responder === "pi-question" || prompt.responder === "pi-confirm" || prompt.responder === "pi-input") {
     return hintAtEnd(shown, PI_MENU_HINT_AT_END_RE, PI_FOOTER_LINES, 4)
       || hintAtEnd(shown, PI_INPUT_HINT_AT_END_RE, PI_FOOTER_LINES, 4);
@@ -1630,7 +1632,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         // Claude's unnumbered rows and pi's models are read with no number to aim at: looked at
         // again before the Enter even when it needs no move. So is Claude's model list, picked
         // with a letter: typed after the list has gone, it would stand in the agent's own prompt
-        let moved = reader?.reread === "before-commit";
+        let moved = reader !== undefined && reader.reread !== "none";
         // Claude's and Codex's model lists: a window on a list, picked with a letter; Claude's effort
         // slider the same way, its levels side by side
         const list = reader !== undefined && reader.list !== "none";
@@ -1688,7 +1690,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         };
         if (interaction) {
           const result = await executeInteractionPlan(interaction, body.option_index!, {
-            rereadMoves: list,
+            rereadMoves: list || reader?.reread === "each-move",
             active: asks,
             cancelled: () => request.signal.aborted,
             read: async () => await onRow() ? matchedScreen : null,
