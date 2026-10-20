@@ -4,7 +4,7 @@ Status: Phase 1 step 2 built for iOS (checked in a simulator) and Android (check
 2026-10-19. To run them, see [The app (app/)](#the-app-app) and
 [The Android app](#the-android-app).
 
-herdr-web-ui ships as a store app for iOS first, Android later. The goal is reach: the app is
+Ovis ships as a store app for iOS first, Android later. The goal is reach: the app is
 found in the App Store and installs in one tap, where the web app needs "Add to Home Screen". It
 also opens the door to features a home-screen web app cannot have.
 
@@ -22,7 +22,7 @@ also opens the door to features a home-screen web app cannot have.
 ## How it fits
 
 ```
-PC: herdr-web-ui server ──UI, API, WebSocket──▶ app WebView (the same client as the browser)
+PC: Ovis server ──UI, API, WebSocket──▶ app WebView (the same client as the browser)
 PC: server/push.ts ──encrypted push──▶ relay (Cloudflare Worker) ──▶ APNs ──▶ app
 ```
 
