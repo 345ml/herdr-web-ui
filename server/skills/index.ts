@@ -3,6 +3,7 @@ import { source as omo } from "./omo.ts";
 import { source as claude } from "./claude.ts";
 import { source as codex } from "./codex.ts";
 import { source as pi } from "./pi.ts";
+import { source as cmd } from "./cmd.ts";
 import { source as omp } from "./omp.ts";
 import { source as gjc } from "./gjc.ts";
 import { source as opencode } from "./opencode.ts";
@@ -48,4 +49,4 @@ const omoFirstByName: AgentCommandSource = {
     return omo.discover(ctx).filter(({ name }) => !names.has(name) && Boolean(names.add(name)));
   },
 };
-export const AGENT_SOURCES: Record<string, AgentCommandSource> = { omo: omoFirstByName, claude, codex, pi, omp, gjc, opencode, devin, grok, hermes, agy };
+export const AGENT_SOURCES: Record<string, AgentCommandSource> = { omo: omoFirstByName, claude, codex, pi, cmd, omp, gjc, opencode, devin, grok, hermes, agy };
