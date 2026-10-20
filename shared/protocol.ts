@@ -1106,6 +1106,10 @@ export interface CommandOutcome {
   result_text?: string;
   /** the command changed the agent's command list: refetch it */
   catalog_changed?: true;
+  /** why the bridge knows the command needs the terminal, such as a skill the agent did not attach */
+  note?: string;
+  /** the skills the agent did not attach, so the command went as plain text: the chip names them in the user's language */
+  unattached_skills?: string[];
   /** when the outcome was created (ISO time) */
   created_at: string;
   /** when the outcome last changed (ISO time) */
