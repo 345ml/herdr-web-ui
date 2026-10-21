@@ -65,7 +65,7 @@ import { modalOpen } from "../lib/focus.ts";
 import { pinchFontSize } from "../lib/pinchFontSize.ts";
 import { narrowPaneFontSize } from "../lib/narrowPaneFont.ts";
 import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "../lib/wheelSteps.ts";
-import { attachTerminalWheel } from "../lib/terminalWheel.ts";
+import { attachTerminalWheel, canPanTerminalGrid } from "../lib/terminalWheel.ts";
 
 /** How long a resize must rest before the grid refits and the pty follows it. */
 const RESIZE_SETTLE_MS = 120;
@@ -728,6 +728,8 @@ export function PaneTerminal({
     attachTerminalWheel(term, wheelStateRef, {
       drag: (event) => { if (!drag) return false; dragWheel(event); return true; },
       adopted: () => adopted(),
+      mirrored: () => scrollableMirror(),
+      pan: (event) => scrollableMirror() && canPanTerminalGrid(host, event.deltaY),
       scroll: (lines) => lineScroll.current?.(lines),
     });
     termRef.current = term;
@@ -741,6 +743,7 @@ export function PaneTerminal({
     // has no cursor; xterm's own rests on the last row with text, which serves the same.
     // the split's other half drawing the active half's tab follows the grid that half gives the pty
     const adopted = (): boolean => observeRef.current || fixedGridRef.current || followRef.current;
+    const scrollableMirror = (): boolean => fixedGridRef.current && !observeRef.current && !followRef.current;
     // The soft keyboard takes the bottom of the screen, not the pane: a fit to what is left above
     // it would size the shared pty to that strip, and every other viewer of the pane, herdr's own
     // window included, would reflow twice per keyboard (#1045). While the keyboard is up, a host
@@ -1591,8 +1594,8 @@ export function PaneTerminal({
     // The text follows the finger, as everywhere on a phone: dragging down brings
     // older lines in. Each event carries the finger's position, since xterm reports
     // a wheel at the cell under it (without one, every report said row 1, column 1).
-    // An adopted grid has no history to send a wheel to (an observer's reports are dropped, a
-    // mirror reports nothing): there the drag pans the mount, both ways, to the cells past its edge.
+    // Observers pan the adopted grid locally. Interactive mirrors scroll herdr's history
+    // through the API instead: there is no attach stream to carry mouse reports.
     // Two fingers pinch the font size: the font follows them locally, and the shared pty resizes once when one lifts.
     let touchX = 0;
     let touchY = 0;
@@ -1721,11 +1724,14 @@ export function PaneTerminal({
       const across = touchX - first.clientX;
       touchX = first.clientX;
       touchY = first.clientY;
-      if (adopted()) {
+      if (adopted() && (!scrollableMirror() || canPanTerminalGrid(host, delta))) {
+        // the pan owns the swipe now: history travel left from before it is not sent at the lift
+        touchPixels = 0;
         panned = true;
         host.scrollBy(across, delta);
         return;
       }
+      if (scrollableMirror() && across !== 0) host.scrollBy(across, 0);
       // xterm sends herdr one report per wheel event however far it went, and herdr scrolls a
       // few lines per report: one line-mode wheel per that many rows of finger travel keeps a
       // swipe as far as a slow drag, and the text under the finger
@@ -1735,7 +1741,7 @@ export function PaneTerminal({
     };
     /** `steps` line-mode wheel reports at the finger, each one herdr scroll step in the sign's direction */
     const sendTouchWheels = (steps: number): void => {
-      if (wheelStateRef.current.omoQuestion) {
+      if (scrollableMirror() || wheelStateRef.current.omoQuestion) {
         lineScroll.current?.(-steps * HERDR_MOUSE_SCROLL_LINES);
         return;
       }
@@ -1750,7 +1756,7 @@ export function PaneTerminal({
     const onTouchEnd = (event: TouchEvent): void => {
       // a lifted one-finger drag sends what is left once it reaches half a step: a flick shorter
       // than one step still scrolls, and a long drag loses at most half a step at its end
-      if (tracking && event.type === "touchend" && !pinchStroke && !adopted()) {
+      if (tracking && event.type === "touchend" && !pinchStroke && (!adopted() || scrollableMirror())) {
         sendTouchWheels(finalStep(touchPixels, cellHeight() * HERDR_MOUSE_SCROLL_LINES));
       }
       touchPixels = 0;
