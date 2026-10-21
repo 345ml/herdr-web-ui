@@ -13,7 +13,7 @@
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
 import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
-import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope } from "../../shared/protocol.ts";
+import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope, SessionHistoryAgent, SessionHistoryResponse } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { skillSyntax } from "../../shared/skill-syntax.ts";
@@ -21,7 +21,7 @@ import { neighborPane } from "../../src/lib/layoutMap.ts";
 import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
 import { rollupStatus } from "../../src/lib/status.ts";
 import { movedTabOrder } from "../../src/lib/tabOrder.ts";
-import { CHATS, PROMPT, SPECS, type DemoSpec } from "./fixtures.ts";
+import { CHATS, PROMPT, SESSION_HISTORY_AGENTS, sessionHistoryRows, SPECS, type DemoSpec } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
 import machinesFixture from "./fixtures/machines.json";
 import agentsFixture from "./fixtures/agents.json";
@@ -387,9 +387,14 @@ const CLAUDE_HIDDEN: SlashCommand[] = [
   { name: "agents", description: "Manage agent configurations", source: "builtin", visibility: "agent-hidden", forms: [{ match: "bare", interaction: "dialog", dialog: "agents" }] },
   { name: "heapdump", description: "Write a heap snapshot", source: "builtin", visibility: "agent-hidden", forms: [{ match: "bare", interaction: "none" }] },
 ];
-/** Claude builtins the recording predates: a side question answered on the screen alone, and a context report the transcript keeps. */
+/**
+ * Claude builtins the recording predates: a side question answered on the screen alone, a context
+ * report the transcript keeps, and the terminal's session picker (the chat opens the folder's
+ * earlier sessions for it, components/SessionHistory.tsx).
+ */
 const CLAUDE_LATER: SlashCommand[] = [
   { name: "btw", description: "Ask a side question without adding it to the conversation", source: "builtin", forms: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }] },
+  { name: "resume", description: "Resume a conversation by ID or name", source: "builtin", forms: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }] },
   { name: "context", description: "Show how the context window is used", source: "builtin", forms: [{ match: "bare", interaction: "none" }] },
 ];
 
@@ -707,6 +712,19 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/push" || path.startsWith("/api/push/")) return error("push_unavailable", "the demo sends no alerts", 404);
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
   if (path.startsWith("/api/machines/")) return error("demo", "remote PCs need a real machine", 404);
+
+  if (path === "/api/sessions/history") {
+    if (method !== "GET") return error("method_not_allowed", "use GET", 400);
+    const workspaceId = query.get("workspace_id");
+    if (!workspaceId) return error("missing_workspace_id", "workspace_id is required", 400);
+    const agent = query.get("agent") ?? "";
+    if (!(SESSION_HISTORY_AGENTS as string[]).includes(agent)) return error("invalid_agent", "agent must name an agent whose sessions are listed", 400);
+    const workspace = snapshot().workspaces.find((candidate) => candidate.workspace_id === workspaceId);
+    if (!workspace) return error("workspace_not_found", "no such workspace", 404);
+    const cwd = workspace.worktree?.checkout_path || snapshot().panes.find((pane) => pane.workspace_id === workspaceId)?.cwd || "";
+    const answer: SessionHistoryResponse = { workspace_id: workspaceId, agent: agent as SessionHistoryAgent, cwd, sessions: sessionHistoryRows(agent as SessionHistoryAgent) };
+    return json(answer, 200, { "cache-control": "no-store" });
+  }
 
   if (path === "/api/worktree/list" || path === "/api/worktree/create" || path === "/api/worktree/open" || path === "/api/worktree/remove") {
     const listing = path === "/api/worktree/list";
@@ -1145,7 +1163,11 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const snap = snapshot();
     const workspace = snap.workspaces.find((w) => w.workspace_id === body["workspace_id"]);
     if (!workspace) return error("not_found", "no such workspace", 404);
-    const agent = (body["agent"] as { kind?: string } | null | undefined)?.kind ?? null;
+    const launch = body["agent"] as { kind?: string; args?: unknown } | null | undefined;
+    const agent = launch?.kind ?? null;
+    // a session resumed from the history dialog (`codex resume <id>`, `claude --resume <id>`: the id
+    // last) is the one the new pane shows, as herdr reports a pane's session
+    const resumed = agent !== null && Array.isArray(launch?.args) && launch.args.length === 2 && typeof launch.args[1] === "string" ? launch.args[1] : null;
     const id = workspace.workspace_id;
     const siblings = snap.panes.filter((p) => p.workspace_id === id);
     const cwd = String(body["cwd"] ?? siblings[0]?.cwd ?? "/home/demo");
@@ -1153,7 +1175,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const number = Math.max(0, ...tabs.map((tab) => tab.number)) + 1;
     const tabId = `${id}:t${number}`;
     const template = snap.panes[0]!;
-    const pane: Pane = { ...structuredClone(template), pane_id: `${id}:p${(nextWorkspace++).toString(36)}`, tab_id: tabId, terminal_id: `${id}:term${number}`, workspace_id: id, label: null, title: null, agent, agent_session: null, agent_status: agent ? "working" : "unknown", cwd, foreground_cwd: cwd, focused: false, terminal_title: null, terminal_title_stripped: null, revision: 1 };
+    const pane: Pane = { ...structuredClone(template), pane_id: `${id}:p${(nextWorkspace++).toString(36)}`, tab_id: tabId, terminal_id: `${id}:term${number}`, workspace_id: id, label: null, title: null, agent, agent_session: resumed === null || agent === null ? null : { agent, kind: "id", source: "demo", value: resumed }, agent_status: agent ? "working" : "unknown", cwd, foreground_cwd: cwd, focused: false, terminal_title: null, terminal_title_stripped: null, revision: 1 };
     snap.panes.push(pane);
     addAgent(pane);
     const label = String(body["label"] ?? "");
