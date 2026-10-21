@@ -89,7 +89,7 @@ describe("pane process roots", () => {
       const identity = spyOn(omo, "omoProcessIdentity").mockReturnValue(null);
       const environ = spyOn(omo, "processEnviron").mockReturnValue(["AGENT_HOME=/fixture"]);
       try {
-        expect(await paneProcessRoots("process-fixture", agent)).toEqual({
+        expect(await paneProcessRoots("process-fixture", agent)).toMatchObject({
           omo: null, environ: ["AGENT_HOME=/fixture"], pid: 102, cwd: "/agent",
         });
         expect(rpc).toHaveBeenCalledTimes(1);
@@ -114,7 +114,26 @@ describe("pane process roots", () => {
     const environ = spyOn(omo, "processEnviron").mockReturnValue(null);
     try {
       expect((await paneProcessRoots("runtime-fixture", "codex")).pid).toBe(102);
-      expect(await paneProcessRoots("runtime-fixture", "claude")).toEqual({ omo: null, environ: null, pid: null, cwd: null });
+      expect(await paneProcessRoots("runtime-fixture", "claude")).toMatchObject({ omo: null, environ: null, pid: null, cwd: null });
+    } finally {
+      environ.mockRestore();
+      identity.mockRestore();
+      rpc.mockRestore();
+    }
+  });
+
+  it("reads an npm Codex's roots from its native child, not the node launcher listed before it", async () => {
+    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({
+      process_info: { foreground_processes: [
+        { pid: 201, argv: ["node", "/tools/bin/codex"], cwd: "/launcher" },
+        { pid: 202, argv: ["/tools/vendor/x86_64-unknown-linux-musl/bin/codex"], cwd: "/native" },
+      ] },
+    });
+    const identity = spyOn(omo, "omoProcessIdentity").mockReturnValue(null);
+    const environ = spyOn(omo, "processEnviron").mockReturnValue(["CODEX_HOME=/fixture"]);
+    try {
+      expect(await paneProcessRoots("launcher-fixture", "codex")).toMatchObject({ pid: 202, cwd: "/native", environ: ["CODEX_HOME=/fixture"] });
+      expect(environ).toHaveBeenCalledWith(202);
     } finally {
       environ.mockRestore();
       identity.mockRestore();
