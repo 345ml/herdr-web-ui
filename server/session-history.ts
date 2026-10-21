@@ -1,12 +1,11 @@
 /**
  * Earlier sessions of a folder, read from each agent's own store, newest first (#1314).
  *
- * Bounded by the #1147 rules: at most the first 64 KiB of any file is read; at most 16384 candidate
- * entries (a session file, a Codex day folder, a Grok session folder: other entries, such as
- * Claude's per-session folders, are passed over at no cost) are taken per listing, each with its own
- * time (an lstat, up to three for a Grok session folder, bounded by those 16384, not counted as a
- * check), and all of them are ordered by
- * time before any is checked, so the newest are checked first whatever the readdir order; at most
+ * Bounded by the #1147 rules: at most the first 64 KiB of any file is read; at most 65536 directory
+ * entries are walked per listing (taken or passed over) and at most 16384 lstats time the entries
+ * taken (a session file one, a Grok session folder three), and the entries taken are all ordered by
+ * time before any is checked, so the newest of them are checked first whatever the readdir order (a
+ * folder past those bounds is seen as far as its readdir order reaches); at most
  * 400 checks are made per listing, a
  * check being one session file's resolution with its stat (spent whatever the resolution finds),
  * or one resolution or stat of a store, a folder or a database; at most 50 rows are returned, and
@@ -23,7 +22,7 @@ import { constants as sqliteConstants, Database } from "bun:sqlite";
 import { closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, readSync, realpathSync, statSync, type BigIntStats, type Dir, type Dirent, type Stats } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { SessionHistoryAgent, SessionHistoryRow } from "../shared/protocol.ts";
 import { agyUserText } from "./agy.ts";
@@ -42,12 +41,17 @@ export const HEAD_BYTES = 64 * 1024;
  */
 export const MAX_STATS = 400;
 /**
- * At most this many candidate entries are taken for one listing, every folder's together: each costs
- * one lstat (a Grok session folder up to three: its two files, else itself; none of them checks) and
- * a place in the sort. Entries the listing passes over by name or type
- * are not counted. Bun's opendirSync still reads a whole folder from the kernel before any of this.
+ * At most this many times are taken for one listing, every folder's together: one lstat for each
+ * session file taken, three for a Grok session folder (its two files, else itself), none for a
+ * Codex day folder. None of these is a check. Bun's opendirSync still reads a whole folder from the
+ * kernel before any of it.
  */
 export const MAX_ENTRIES = 16384;
+/**
+ * At most this many directory entries are walked for one listing, every folder's together, taken or
+ * passed over (Claude's per-session folders, say): passed-over entries cost the walk, not MAX_ENTRIES.
+ */
+export const MAX_WALK = 65536;
 /** At most this many sessions are returned. */
 export const MAX_ROWS = 50;
 const TITLE_CHARS = 200;
@@ -77,6 +81,14 @@ export interface SessionHistoryOptions {
   resolve?: (path: string) => string;
   /** A listed entry's own time, its link not followed (tests count the calls); defaults to lstatSync. */
   lstat?: (path: string) => Stats;
+  /** Stats an opened file's descriptor (tests change the identity it reports); defaults to fstatSync. */
+  fstat?: (fd: number, bigint?: boolean) => Stats | BigIntStats;
+  /** Called right after a store's database opens, before it is read (tests write to the store then). */
+  opened?: (path: string, immutable: boolean, db: Database) => void;
+  /** Opens a folder to walk its entries (tests count the entries walked); defaults to opendirSync. */
+  opendir?: (dir: string) => Dir;
+  /** Checks already spent when the listing starts (tests place a check at the bound). */
+  spent?: number;
   /** The OS whose folder rules apply; defaults to this one's (tests take Windows's on any OS). */
   platform?: NodeJS.Platform;
   /** Resolves a Windows cwd to its canonical long form (tests map an 8.3 alias); defaults to realpathSync.native. */
@@ -174,6 +186,9 @@ const inside = (root: string, path: string): boolean => {
   return child !== "" && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
 };
 
+/** A file identity field as bigint (a stat taken without bigint gives a number). */
+const bigintOf = (value: number | bigint): bigint => typeof value === "bigint" ? value : BigInt(value);
+
 /** At most `max` bytes from the start of an open file. */
 function defaultReadHead(fd: number, max: number): Buffer {
   const buffer = Buffer.alloc(max);
@@ -187,11 +202,11 @@ function defaultReadHead(fd: number, max: number): Buffer {
  * (a folder above it swapped for a link reaches another file by the same path). A reader gets only
  * this descriptor, so none can read another file.
  */
-function openChecked(file: { real: string; dev: number; ino: number }): number {
+function openChecked(budget: Budget, file: { real: string; dev: bigint; ino: bigint }): number {
   const fd = openSync(file.real, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
   try {
-    const opened = fstatSync(fd);
-    if (!opened.isFile() || opened.dev !== file.dev || opened.ino !== file.ino) throw new Error("not the file that was checked");
+    const opened = budget.fstatOf(fd, true);
+    if (!opened.isFile() || bigintOf(opened.dev) !== file.dev || bigintOf(opened.ino) !== file.ino) throw new Error("not the file that was checked");
     return fd;
   } catch (error) { closeSync(fd); throw error; }
 }
@@ -203,11 +218,15 @@ function openChecked(file: { real: string; dev: number; ino: number }): number {
 class Budget {
   used = 0;
   entries = 0;
+  walked = 0;
   constructor(
     private readonly statOf: (path: string, bigint?: boolean) => Stats | BigIntStats,
     readonly platform: NodeJS.Platform,
     private readonly resolveOf: (path: string) => string = realpathSync,
     private readonly lstatOf: (path: string) => Stats = lstatSync,
+    readonly fstatOf: (fd: number, bigint?: boolean) => Stats | BigIntStats = (fd, bigint) => bigint ? fstatSync(fd, { bigint: true }) : fstatSync(fd),
+    private readonly opendirOf: (dir: string) => Dir = opendirSync,
+    readonly onOpened: (path: string, immutable: boolean, db: Database) => void = () => {},
   ) {}
 
   get exhausted(): boolean { return this.used >= MAX_STATS; }
@@ -216,6 +235,18 @@ class Budget {
     if (this.exhausted) return null;
     this.used++;
     try { return this.statOf(path) as Stats; } catch { return null; }
+  }
+
+  /**
+   * A file's stat with its identity in bigint, as one counted check; null once spent, or when it is
+   * gone. `again`: the same file's identity once more, part of the check already made, not another.
+   */
+  identity(path: string, again = false): { isFile: boolean; dev: bigint; ino: bigint } | null {
+    if (!again) {
+      if (this.exhausted) return null;
+      this.used++;
+    }
+    try { const stat = this.statOf(path, true); return { isFile: stat.isFile(), dev: bigintOf(stat.dev), ino: bigintOf(stat.ino) }; } catch { return null; }
   }
 
   /** The path resolved (realpath), as one counted check; null once spent, or when it does not resolve. */
@@ -229,30 +260,34 @@ class Budget {
    * A session file, as one check: its resolution, and its stat once it resolves inside `root`. The
    * check is spent whatever the resolution finds (a dangling or outside link costs it too).
    */
-  file(path: string, root: string): { real: string; stat: Stats } | null {
+  file(path: string, root: string): { real: string; stat: Stats | BigIntStats } | null {
     if (this.exhausted) return null;
     this.used++;
     let real: string;
     try { real = this.resolveOf(path); } catch { return null; }
     if (!inside(root, real)) return null;
-    try { return { real, stat: this.statOf(real) as Stats }; } catch { return null; }
+    // bigint: an NTFS file ID can pass 2^53, and two that differ only in their low bits round to one number
+    try { return { real, stat: this.statOf(real, true) }; } catch { return null; }
   }
 
   /**
    * A folder's entries that `keep` takes (decided from the entry alone: its name and type), unordered,
-   * as many as the listing has left to take; none for an unreadable folder. An entry `keep` passes
-   * over (a Claude session's folder of subagent transcripts, say) costs no syscall and is not counted.
+   * as many as the listing has left. Every entry walked counts against MAX_WALK, taken or passed over
+   * (a Claude session's folder of subagent transcripts, say); a taken one reserves `lstats` of
+   * MAX_ENTRIES for the times taken of it later. None for an unreadable folder.
    */
-  list(dir: string, keep: (entry: Dirent) => boolean = () => true): Dirent[] {
+  list(dir: string, keep: (entry: Dirent) => boolean = () => true, lstats = 0): Dirent[] {
     const found: Dirent[] = [];
     let handle: Dir | undefined;
     try {
-      handle = opendirSync(dir);
-      while (this.entries < MAX_ENTRIES) {
+      handle = this.opendirOf(dir);
+      while (this.walked < MAX_WALK) {
         const entry = handle.readSync();
         if (entry === null) break;
+        this.walked++;
         if (!keep(entry)) continue;
-        this.entries++;
+        if (this.entries + lstats > MAX_ENTRIES) break;
+        this.entries += lstats;
         found.push(entry);
       }
     } catch { /* an unreadable folder lists nothing */ }
@@ -301,14 +336,14 @@ class Scan {
     const checked = this.budget.file(path, this.root);
     if (checked === null || !checked.stat.isFile()) return null;
     const { real, stat } = checked;
-    return { real, mtimeMs: stat.mtimeMs, size: stat.size, dev: stat.dev, ino: stat.ino };
+    return { real, mtimeMs: Number(stat.mtimeMs), size: Number(stat.size), dev: bigintOf(stat.dev), ino: bigintOf(stat.ino) };
   }
 
   /** At most HEAD_BYTES of a resolved file, split in lines; `cut` when the file goes on past them. */
   head(file: Found): { lines: string[]; cut: boolean } {
     let head: Buffer;
     try {
-      const fd = openChecked(file);
+      const fd = openChecked(this.budget, file);
       try { head = this.reader(fd, HEAD_BYTES); } finally { closeSync(fd); }
     } catch { return { lines: [], cut: false }; }
     return { lines: head.toString("utf8").split("\n"), cut: head.length >= HEAD_BYTES && file.size > head.length };
@@ -339,15 +374,15 @@ function scanOf(budget: Budget, path: string, read: SessionHistoryOptions["readH
 }
 
 /** These folders' entries newest first by their own times (a link not followed), within the listing's entry bound. */
-function newestEntries(budget: Budget, dirs: readonly string[], keep: (entry: Dirent) => boolean, timeOf: (path: string) => number | null = (path) => budget.modified(path)): string[] {
-  return dirs.flatMap((dir) => budget.list(dir, keep).flatMap((entry) => {
+function newestEntries(budget: Budget, dirs: readonly string[], keep: (entry: Dirent) => boolean, lstats = 1, timeOf: (path: string) => number | null = (path) => budget.modified(path)): string[] {
+  return dirs.flatMap((dir) => budget.list(dir, keep, lstats).flatMap((entry) => {
     const path = join(dir, entry.name);
     const time = timeOf(path);
     return time === null ? [] : [{ path, time }];
   })).sort((a, b) => b.time - a.time).map((entry) => entry.path);
 }
 
-type Found = { real: string; mtimeMs: number; size: number; dev: number; ino: number };
+type Found = { real: string; mtimeMs: number; size: number; dev: bigint; ino: bigint };
 
 /**
  * The `.jsonl` files directly in these directories (subagent folders beside them are not read), newest
@@ -590,7 +625,8 @@ function grokSessions(cwds: readonly string[], home: string, env: Record<string,
   };
   const sessionDirs = (group: string): string[] => {
     // newest first, within the listing's entry bound, so the checks go to the newest sessions
-    return newestEntries(budget, [join(scan.root, group)], (entry) => entry.isDirectory(), written);
+    // up to three lstats each: its two files, else the folder itself
+    return newestEntries(budget, [join(scan.root, group)], (entry) => entry.isDirectory(), 3, written);
   };
   const rows: Row[] = [];
   const readGroup = (group: string, dirs: readonly string[] = sessionDirs(group)) => {
@@ -672,21 +708,103 @@ function withDatabase<T>(budget: Budget, storeDir: string, path: string, read: (
   const parent = real === null ? null : budget.resolve(dirname(path));
   if (real === null || parent === null) return null;
   if (!inside(root, real) || (parent !== root && !inside(root, parent)) || dirname(real) !== parent) return null;
-  const checked = budget.stat(real);
-  if (!checked?.isFile()) return null;
+  const checked = budget.identity(real);
+  if (!checked?.isFile) return null;
+  let fd: number | undefined;
   let db: Database | undefined;
   try {
-    // the database opened must be the one checked: a link put in its place is not followed
-    // (SQLITE_OPEN_NOFOLLOW; SQLite's Unix VFS refuses it, its Windows one does not look), and after
-    // the open the path must still be the checked file (a folder above it swapped for a link, or
-    // Windows), so a swap between the check and the open lists nothing
-    db = new Database(real, sqliteConstants.SQLITE_OPEN_READONLY | sqliteConstants.SQLITE_OPEN_NOFOLLOW);
-    const opened = budget.stat(real);
-    if (!opened?.isFile() || opened.dev !== checked.dev || opened.ino !== checked.ino) return null;
+    // the checked file itself, opened: a link put in its place is refused (O_NOFOLLOW), and the
+    // descriptor must be the checked file (a file swapped in and back between two looks at the path
+    // is not; nor is a folder above it swapped for a link)
+    fd = openSync(real, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
+    const opened = budget.fstatOf(fd, true);
+    if (!opened.isFile() || bigintOf(opened.dev) !== checked.dev || bigintOf(opened.ino) !== checked.ino) return null;
+    // a -wal there before the first read (a restored store's) is no writer; one appearing after is
+    const logBefore = budget.modified(`${real}-wal`) !== null;
+    const first = openDatabase(budget, real, fd, checked, true);
+    if (first === null) return null;
+    db = first.db;
+    let answer: { value: T } | null = null;
+    try { db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`); answer = { value: read(db) }; } catch { /* read again below when immutable */ }
+    db.close();
+    db = undefined;
+    if (!first.immutable) return answer?.value ?? null;
+    // an immutable read is only sound while nobody writes: SQLite gives undefined results (stale rows,
+    // SQLITE_CORRUPT) when the file changes under it. A writer is spotted by the file's modification
+    // time, change time and size, and by a -wal appearing (a filesystem with 1-2 s timestamps can hide
+    // a same-size rewrite within one tick: the limit). Unchanged: the answer holds, or, when the read
+    // failed, nothing is listed (reading again would fail the same way). Changed: read once more, as
+    // SQLite reads a store being written only when both its -wal and -shm are there (no listing may
+    // make either), else immutable again, which must find the file unchanged too; at most two reads
+    const unchanged = (since: BigIntStats) => {
+      const now = budget.fstatOf(fd!, true) as BigIntStats;
+      return now.mtimeNs === since.mtimeNs && now.ctimeNs === since.ctimeNs && now.size === since.size && (budget.modified(`${real}-wal`) !== null) === logBefore;
+    };
+    if (unchanged(opened as BigIntStats)) return answer?.value ?? null;
+    const before = budget.fstatOf(fd, true) as BigIntStats;
+    const second = openDatabase(budget, real, fd, checked, !liveLog(budget, real));
+    if (second === null) return null;
+    db = second.db;
     db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
-    return read(db);
+    const value = read(db);
+    if (second.immutable && !unchanged(before)) return null;
+    return value;
   } catch { return null; }
-  finally { db?.close(); }
+  finally { db?.close(); if (fd !== undefined) closeSync(fd); }
+}
+
+/**
+ * Whether a WAL store's writer is live: both its -wal and -shm are there. SQLite makes whichever is
+ * missing when it opens a WAL store as such, so with one of them missing (a store restored with its
+ * -wal and no -shm, say) it is read immutable: nothing is written, and what only that -wal holds is
+ * not seen.
+ */
+const liveLog = (budget: Budget, real: string): boolean => budget.modified(`${real}-wal`) !== null && budget.modified(`${real}-shm`) !== null;
+
+/**
+ * SQLite on the checked database, read-only, writing nothing into the user's store.
+ *
+ * - A WAL database with no `-wal` beside it has nothing in its log: it opens `immutable=1`, so SQLite
+ *   neither locks it nor makes a `-wal` and `-shm` (a plain read-only open would make both). That read
+ *   holds only while nobody writes; withDatabase checks the file after it and reads it once more when
+ *   it changed: as such when a writer's -wal is live then, else immutable again, checked again.
+ * - A WAL database whose `-wal` and `-shm` both exist (its agent writes now) opens as such, so the
+ *   sessions still in its log are read; its side files are there already. With only one of them it
+ *   reads immutable (liveLog).
+ * - A rollback-journal database opens as such, with SQLite's locks against a writer mid-change.
+ *
+ * On Linux and macOS SQLite opens the checked descriptor as /dev/fd/N: macOS opens the descriptor
+ * itself, and Linux the file it names now (the checked file, wherever it went). macOS would look for a
+ * live log or a crashed writer's hot journal beside /dev/fd/N, so only an immutable read opens the
+ * descriptor there; a live WAL and a rollback-journal store open by their path. Windows has no /dev/fd: there and
+ * for a live WAL on macOS, the path is opened and must still be the checked file after the open (a
+ * file swapped in between the descriptor's check and that open, then back, is not caught: the
+ * residual, while an agent writes on macOS, or on Windows).
+ */
+function openDatabase(budget: Budget, real: string, fd: number, checked: { dev: bigint; ino: bigint }, mayBeImmutable: boolean): { db: Database; immutable: boolean } | null {
+  const header = Buffer.alloc(20);
+  const wal = readSync(fd, header, 0, 20, 0) === 20 && header[18] === 2 && header[19] === 2;
+  const logged = wal && liveLog(budget, real);
+  const immutable = mayBeImmutable && wal && !logged;
+  // macOS looks for a store's -wal or -journal beside /dev/fd/N, where there is none: only an immutable
+  // read, which reads neither, opens the descriptor there
+  const descriptor = process.platform === "linux" || (process.platform === "darwin" && immutable) ? `/dev/fd/${fd}` : null;
+  const flags = sqliteConstants.SQLITE_OPEN_READONLY | sqliteConstants.SQLITE_OPEN_URI;
+  if (descriptor !== null) {
+    const db = new Database(immutable ? `file:${descriptor}?immutable=1` : descriptor, flags);
+    budget.onOpened(real, immutable, db);
+    // Linux resolves /dev/fd/N to the path that names the descriptor's file and opens that: the path
+    // must still be the checked file once SQLite has it (part of the database's one check)
+    const again = budget.identity(real, true);
+    if (!again?.isFile || again.dev !== checked.dev || again.ino !== checked.ino) { db.close(); return null; }
+    return { db, immutable };
+  }
+  const db = new Database(immutable ? `${pathToFileURL(real).href}?immutable=1` : real, flags | sqliteConstants.SQLITE_OPEN_NOFOLLOW);
+  budget.onOpened(real, immutable, db);
+  // part of the database's one check: a database checked at the 400th check is still listed
+  const again = budget.identity(real, true);
+  if (!again?.isFile || again.dev !== checked.dev || again.ino !== checked.ino) { db.close(); return null; }
+  return { db, immutable };
 }
 
 const tableExists = (db: Database, name: string) => db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== null;
@@ -838,7 +956,8 @@ export function listSessions(agent: SessionHistoryAgent, cwd: string, options: S
   const env = options.env ?? process.env;
   const home = options.home ?? homedir();
   const read = options.readHead;
-  const budget = new Budget(options.stat ?? ((path, bigint) => bigint ? statSync(path, { bigint: true }) : statSync(path)), options.platform ?? process.platform, options.resolve, options.lstat);
+  const budget = new Budget(options.stat ?? ((path, bigint) => bigint ? statSync(path, { bigint: true }) : statSync(path)), options.platform ?? process.platform, options.resolve, options.lstat, options.fstat, options.opendir, options.opened);
+  budget.used = options.spent ?? 0;
   // the pane's cwd may be another spelling of the folder the agent recorded: a Windows 8.3 alias (a
   // child keeps the short cwd) or a link (macOS /var -> /private/var). Resolve it once, as one counted
   // stat, and key and match every store by both spellings

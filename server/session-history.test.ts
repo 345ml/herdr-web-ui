@@ -1,14 +1,16 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, opendirSync, readdirSync, type BigIntStats, type Dir, type Dirent, type Stats, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { SessionHistoryAgent, SessionSnapshot } from "../shared/protocol.ts";
-import { HEAD_BYTES, listSessions, MAX_ENTRIES, MAX_ROWS, MAX_STATS, SESSION_HISTORY_AGENTS } from "./session-history.ts";
+import { HEAD_BYTES, listSessions, MAX_ENTRIES, MAX_ROWS, MAX_STATS, MAX_WALK, SESSION_HISTORY_AGENTS } from "./session-history.ts";
 import { handleSessionHistoryRequest, workspaceFolder } from "./session-history-routes.ts";
 import { claudeProjectDir } from "./claude-store.ts";
 
+/** A stat as the listing asks for it: with `bigint`, the identity an NTFS file ID above 2^53 keeps exactly. */
+const statAs = (path: string, bigint?: boolean): Stats | BigIntStats => bigint ? statSync(path, { bigint: true }) : statSync(path);
 const FIXTURES = join(import.meta.dir, "fixtures", "session-history");
 const WINDOWS = process.platform === "win32";
 const CWD = WINDOWS ? "C:\\work\\project" : "/work/project";
@@ -172,7 +174,7 @@ describe("listSessions", () => {
       writeFileSync(join(dir, "summary.json"), JSON.stringify({ info: { id: `session-${n}`, cwd: CWD }, updated_at: "2026-10-01T09:00:00Z" }));
     }
     let stats = 0;
-    const rows = listSessions("grok", CWD, { home, env: {}, stat: (path) => { stats++; return statSync(path); } });
+    const rows = listSessions("grok", CWD, { home, env: {}, stat: (path, bigint) => { stats++; return statAs(path, bigint); } });
     expect(stats).toBeGreaterThan(MAX_ROWS);
     expect(stats).toBeLessThanOrEqual(MAX_STATS);
     expect(rows).toHaveLength(MAX_ROWS);
@@ -191,7 +193,7 @@ describe("listSessions", () => {
     const rows = listSessions("pi", CWD, {
       home, env: {},
       resolve: (path) => { resolutions++; return realpathSync(path); },
-      stat: (path) => { stats++; return statSync(path); },
+      stat: (path, bigint) => { stats++; return statAs(path, bigint); },
     });
     expect(rows).toEqual([]);
     expect(resolutions).toBeGreaterThan(MAX_ROWS);
@@ -210,8 +212,8 @@ describe("listSessions", () => {
     const rows = listSessions("pi", CWD, {
       home, env: {},
       // the file is checked, then swapped for a link out of the store before it is opened
-      stat: (path) => {
-        const stat = statSync(path);
+      stat: (path, bigint) => {
+        const stat = statAs(path, bigint);
         if (path === checked) { rmSync(path); symlinkSync(join(outside, "secret.jsonl"), path); }
         return stat;
       },
@@ -253,8 +255,8 @@ describe("listSessions", () => {
     const rows = listSessions("hermes", CWD, {
       home, env: {},
       // the database is checked, then swapped for a link to another one before it is opened
-      stat: (path) => {
-        const stat = statSync(path);
+      stat: (path, bigint) => {
+        const stat = statAs(path, bigint);
         if (path === checked && !swapped) { swapped = true; rmSync(path); symlinkSync(join(elsewhere, ".hermes", "state.db"), path); }
         return stat;
       },
@@ -275,8 +277,8 @@ describe("listSessions", () => {
     const checked = realpathSync(session);
     const rows = listSessions("pi", CWD, {
       home, env: {},
-      stat: (path) => {
-        const stat = statSync(path);
+      stat: (path, bigint) => {
+        const stat = statAs(path, bigint);
         if (path === checked) { rmSync(path); symlinkSync(join(outside, "secret.jsonl"), path); }
         return stat;
       },
@@ -287,6 +289,346 @@ describe("listSessions", () => {
     });
     expect(rows.map((row) => row.firstMessage)).not.toContain("outside the store");
     expect(rows).toEqual([]);
+  });
+
+  // NTFS file IDs often pass 2^53: two that differ only in their low bits round to one number
+  const NEAR = 2n ** 60n;
+  const withIno = <T extends Stats | BigIntStats>(stat: T, ino: bigint): T =>
+    Object.assign(Object.create(Object.getPrototypeOf(stat) as object) as T, stat, { ino: typeof stat.ino === "bigint" ? ino : Number(ino) });
+
+  it("refuses a session file whose opened identity differs from the checked one only past 2^53", () => {
+    const home = newHome();
+    mkdirSync(piStore(home), { recursive: true });
+    const session = join(piStore(home), "session.jsonl");
+    writeFileSync(session, piHeader(ID(1)) + piPrompt("inside the store"));
+    const checked = realpathSync(session);
+    const listed = (opened: bigint) => listSessions("pi", CWD, {
+      home, env: {},
+      stat: (path, bigint) => path === checked ? withIno(statAs(path, bigint), NEAR + 1n) : statAs(path, bigint),
+      fstat: (fd, bigint) => withIno(bigint ? fstatSync(fd, { bigint: true }) : fstatSync(fd), opened),
+    }).map((row) => row.id);
+    expect(listed(NEAR + 1n)).toEqual([ID(1)]);
+    expect(listed(NEAR + 2n)).toEqual([]);
+  });
+
+  it("refuses a SQLite store whose opened descriptor differs from the checked one only past 2^53", () => {
+    const home = newHome();
+    install("hermes", home);
+    const checked = realpathSync(join(home, ".hermes", "state.db"));
+    const listed = (opened: bigint) => listSessions("hermes", CWD, {
+      home, env: {},
+      stat: (path, bigint) => path === checked ? withIno(statAs(path, bigint), NEAR + 1n) : statAs(path, bigint),
+      fstat: (fd, bigint) => withIno(bigint ? fstatSync(fd, { bigint: true }) : fstatSync(fd), opened),
+    }).length;
+    expect(listed(NEAR + 1n)).toBe(2);
+    expect(listed(NEAR + 2n)).toBe(0);
+  });
+
+  it("reads nothing from a SQLite store swapped for another database and swapped back between its two checks", () => {
+    const home = newHome();
+    install("hermes", home);
+    const elsewhere = newHome();
+    install("hermes", elsewhere);
+    const outside = new Database(join(elsewhere, ".hermes", "state.db"));
+    outside.exec("UPDATE messages SET content = 'outside the store' WHERE role = 'user'");
+    outside.close();
+    const checked = realpathSync(join(home, ".hermes", "state.db"));
+    const kept = `${checked}.kept`;
+    let seen = 0;
+    const rows = listSessions("hermes", CWD, {
+      home, env: {},
+      stat: (path, bigint) => {
+        if (path !== checked) return statAs(path, bigint);
+        // at its check the database is swapped for another one (a file, which no link check sees), and
+        // swapped back before the next look, so both looks see the checked file
+        if (seen++ === 0) {
+          const stat = statAs(path, bigint);
+          renameSync(checked, kept); copyFileSync(join(elsewhere, ".hermes", "state.db"), checked);
+          return stat;
+        }
+        if (seen === 2) { rmSync(checked); renameSync(kept, checked); }
+        return statAs(path, bigint);
+      },
+    });
+    expect(rows.map((row) => row.firstMessage)).not.toContain("outside the store");
+    expect(rows).toEqual([]);
+  });
+
+  const sideFiles = (dir: string) => readdirSync(dir).filter((name) => /-(wal|shm)$/.test(name)).sort();
+
+  it("writes no -wal or -shm into a WAL store it reads", () => {
+    const home = newHome();
+    install("hermes", home);
+    const db = join(home, ".hermes", "state.db");
+    const writer = new Database(db);
+    writer.exec("PRAGMA journal_mode = WAL");
+    writer.close();
+    const before = sideFiles(dirname(db));
+    let reads = 0;
+    expect(listSessions("hermes", CWD, { home, env: {}, opened: () => { reads++; } }).map((row) => row.id)).toEqual(EXPECTED.hermes);
+    expect(sideFiles(dirname(db))).toEqual(before);
+    // nobody wrote meanwhile: the immutable read stands, and the store is read once
+    expect(reads).toBe(1);
+  });
+
+  it("reads a WAL store once more, as it is being written, when a writer checkpoints into it during an immutable read", () => {
+    const home = newHome();
+    install("hermes", home);
+    const db = join(home, ".hermes", "state.db");
+    const setup = new Database(db);
+    setup.exec("PRAGMA journal_mode = WAL");
+    setup.close();
+    let writer: Database | undefined;
+    let reads = 0;
+    try {
+      const rows = listSessions("hermes", CWD, {
+        home, env: {},
+        // between the immutable open and the query, another connection writes and checkpoints into the
+        // main file (an agent opening its store, writing, checkpointing); it stays open, as a writer does
+        opened: (_path, immutable) => {
+          reads++;
+          if (!immutable || writer) return;
+          writer = new Database(db);
+          writer.exec("PRAGMA wal_autocheckpoint = 0");
+          writer.transaction(() => {
+            writer!.query("INSERT INTO sessions VALUES ('20261005_090000_fx0005', 'cli', NULL, 1791190800, NULL, ?, 'Fresh hermes title', 1791194400)").run(CWD);
+            writer!.exec("INSERT INTO messages (session_id, role, content, timestamp) VALUES ('20261005_090000_fx0005', 'user', 'fresh prompt', 1791190801)");
+            writer!.exec("UPDATE messages SET content = 'rewritten prompt' WHERE role = 'user' AND session_id != '20261005_090000_fx0005'");
+            for (let n = 0; n < 6000; n++) writer!.query("INSERT INTO messages (session_id, role, content, timestamp) VALUES ('20261004_090000_fx0004', 'assistant', ?, 1791104401)").run(`filler ${n} ${"x".repeat(200)}`);
+          })();
+          writer.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        },
+      });
+      expect(rows.map((row) => [row.id, row.firstMessage])).toEqual([
+        ["20261005_090000_fx0005", "fresh prompt"],
+        ["20261002_090000_fx0002", "rewritten prompt"],
+        ["20261001_090000_fx0001", "rewritten prompt"],
+      ]);
+      // the immutable read, then the one read as SQLite reads a store being written
+      expect(reads).toBe(2);
+    } finally { writer?.close(); }
+  });
+
+  it("reads a WAL store immutable once more, writing nothing into it, when its writer came and went during the read", () => {
+    const home = newHome();
+    install("hermes", home);
+    const db = join(home, ".hermes", "state.db");
+    const setup = new Database(db);
+    setup.exec("PRAGMA journal_mode = WAL");
+    setup.close();
+    let reads = 0;
+    let afterWriter: string[] | undefined;
+    const rows = listSessions("hermes", CWD, {
+      home, env: {},
+      // between the immutable open and the query an agent opens the store, writes, checkpoints and
+      // closes: its last close takes its side files with it
+      opened: (_path, immutable) => {
+        reads++;
+        if (!immutable || afterWriter) return;
+        const writer = new Database(db);
+        writer.exec("UPDATE messages SET content = 'rewritten prompt' WHERE role = 'user'");
+        writer.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        writer.close();
+        afterWriter = sideFiles(dirname(db));
+      },
+    });
+    // the listing made no side file of its own
+    expect(sideFiles(dirname(db))).toEqual(afterWriter!);
+    expect(rows.map((row) => row.firstMessage)).toEqual(["rewritten prompt", "rewritten prompt"]);
+    expect(reads).toBe(2);
+  });
+
+  it("lists nothing, and writes nothing into it, from a WAL store whose first read failed with no writer", () => {
+    const home = newHome();
+    install("hermes", home);
+    const db = join(home, ".hermes", "state.db");
+    const setup = new Database(db);
+    setup.exec("PRAGMA journal_mode = WAL");
+    setup.close();
+    const before = sideFiles(dirname(db));
+    let reads = 0;
+    const rows = listSessions("hermes", CWD, {
+      home, env: {},
+      // the first read fails (its connection is gone) while nobody writes: nothing changed, so it is not read again
+      opened: (_path, immutable, opened) => { if (reads++ === 0 && immutable) opened.close(); },
+    });
+    expect(sideFiles(dirname(db))).toEqual(before);
+    expect(rows).toEqual([]);
+    expect(reads).toBe(1);
+  });
+
+  it("reads a restored WAL store whose -wal has no -shm immutable, writing nothing into it", () => {
+    const home = newHome();
+    install("hermes", home);
+    const db = join(home, ".hermes", "state.db");
+    const writer = new Database(db);
+    writer.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; PRAGMA wal_checkpoint(TRUNCATE)");
+    writer.exec("UPDATE messages SET content = 'only in the log' WHERE session_id = '20261002_090000_fx0002' AND role = 'user'");
+    // a store restored from a copy: its main file and a valid -wal, no -shm
+    const restored = newHome();
+    mkdirSync(join(restored, ".hermes"));
+    copyFileSync(db, join(restored, ".hermes", "state.db"));
+    copyFileSync(`${db}-wal`, join(restored, ".hermes", "state.db-wal"));
+    writer.close();
+    const store = join(restored, ".hermes");
+    const before = sideFiles(store);
+    expect(before).toEqual(["state.db-wal"]);
+    const rows = listSessions("hermes", CWD, { home: restored, env: {} });
+    expect(sideFiles(store)).toEqual(before);
+    // immutable reads the main file alone: what only the log holds is not seen
+    expect(rows.map((row) => row.firstMessage)).toEqual(["Fixture hermes prompt 2", "Fixture hermes prompt 1"]);
+  });
+
+  it("lists nothing from a SQLite store whose path names another file once SQLite has opened it", () => {
+    for (const wal of [false, true]) {
+      const home = newHome();
+      install("hermes", home);
+      const db = join(home, ".hermes", "state.db");
+      if (wal) { const setup = new Database(db); setup.exec("PRAGMA journal_mode = WAL"); setup.close(); }
+      const checked = realpathSync(db);
+      let opened = false;
+      const listed = listSessions("hermes", CWD, {
+        home, env: {},
+        opened: () => { opened = true; },
+        // once SQLite has opened the store, its path reports another file
+        stat: (path, bigint) => path === checked && opened ? withIno(statAs(path, bigint), NEAR + 9n) : statAs(path, bigint),
+      });
+      expect([wal, listed]).toEqual([wal, []]);
+    }
+  });
+
+  it("never reads a crashed writer's uncommitted change from a rollback-journal store", () => {
+    const home = newHome();
+    install("hermes", home);
+    const db = join(home, ".hermes", "state.db");
+    const writer = new Database(db);
+    // a writer whose uncommitted pages reach the main file (a tiny cache spills them), then a crash:
+    // the main file and its hot -journal, as they are on disk
+    writer.exec("PRAGMA journal_mode = DELETE; PRAGMA cache_spill = ON; PRAGMA cache_size = 1");
+    writer.transaction(() => { for (let n = 0; n < 2000; n++) writer.query("INSERT INTO messages (session_id, role, content, timestamp) VALUES ('20261004_090000_fx0004', 'assistant', ?, 1791104401)").run(`pad ${"x".repeat(500)}`); })();
+    writer.exec("BEGIN; UPDATE messages SET content = 'uncommitted prompt' WHERE role = 'user'");
+    writer.exec(`UPDATE messages SET content = '${"y".repeat(500)}' WHERE role = 'assistant'`);
+    const crashed = newHome();
+    mkdirSync(join(crashed, ".hermes"));
+    copyFileSync(db, join(crashed, ".hermes", "state.db"));
+    expect(existsSync(`${db}-journal`)).toBe(true);
+    copyFileSync(`${db}-journal`, join(crashed, ".hermes", "state.db-journal"));
+    writer.exec("ROLLBACK");
+    writer.close();
+    const rows = listSessions("hermes", CWD, { home: crashed, env: {} });
+    expect(rows.map((row) => row.firstMessage)).not.toContain("uncommitted prompt");
+  });
+
+  it("lists a session still in a WAL store's log while its agent writes", () => {
+    const home = newHome();
+    install("hermes", home);
+    const db = join(home, ".hermes", "state.db");
+    const writer = new Database(db);
+    try {
+      writer.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; PRAGMA wal_checkpoint(TRUNCATE)");
+      // written after the last checkpoint: only the -wal holds it (an immutable open would miss it)
+      writer.exec("UPDATE messages SET content = 'only in the log' WHERE session_id = '20261002_090000_fx0002' AND role = 'user'");
+      const before = sideFiles(dirname(db));
+      const rows = listSessions("hermes", CWD, { home, env: {} });
+      expect(rows.map((row) => row.firstMessage)).toContain("only in the log");
+      expect(sideFiles(dirname(db))).toEqual(before);
+    } finally { writer.close(); }
+  });
+
+  it(`lists a database whose check is the ${MAX_STATS}th: its identity after the open is part of that check`, () => {
+    const home = newHome();
+    install("hermes", home);
+    // a Hermes listing spends 6 checks up to its database's identity: the cwd's canonical form, the
+    // store's stat and resolution, the database's and its folder's resolutions, then the identity
+    const listed = (spent: number) => listSessions("hermes", CWD, { home, env: {}, spent }).length;
+    expect(listed(MAX_STATS - 7)).toBe(2);
+    expect(listed(MAX_STATS - 6)).toBe(2);
+    // one check further and the identity is past the bound: nothing is listed
+    expect(listed(MAX_STATS - 5)).toBe(0);
+  });
+
+  // the entries a listing walks, taken or passed over, as the opendir seam counts them
+  const walking = () => {
+    const seen = { walked: 0, lstats: 0 };
+    const opendir = (dir: string): Dir => {
+      const handle = opendirSync(dir);
+      return Object.assign(Object.create(Object.getPrototypeOf(handle) as object) as Dir, {
+        readSync: () => { const entry = handle.readSync(); if (entry !== null) seen.walked++; return entry; },
+        closeSync: () => handle.closeSync(),
+      });
+    };
+    return { seen, opendir, lstat: (path: string) => { seen.lstats++; return lstatSync(path); } };
+  };
+
+  it(`walks at most ${MAX_WALK} entries of a folder, entries passed over included, and times at most ${MAX_ENTRIES}`, () => {
+    const home = newHome();
+    const project = join(home, ".claude", "projects", claudeProjectDir(CWD));
+    mkdirSync(project, { recursive: true });
+    // a project of folders the listing passes over (Claude's per-session folders), and a few sessions
+    for (let n = 0; n < MAX_ENTRIES + 4000; n++) mkdirSync(join(project, `folder-${n}`));
+    for (let n = 0; n < 10; n++) writeFileSync(join(project, `${n.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000.jsonl`), "");
+    const { seen, opendir, lstat } = walking();
+    try { listSessions("claude", CWD, { home, env: {}, opendir, lstat }); }
+    finally { rmSync(home, { recursive: true, force: true }); }
+    expect(seen.walked).toBeGreaterThan(MAX_ENTRIES);
+    expect(seen.walked).toBeLessThanOrEqual(MAX_WALK);
+    expect(seen.lstats).toBeLessThanOrEqual(MAX_ENTRIES);
+  }, 60_000);
+
+  it(`counts every lstat a Grok session folder takes within the ${MAX_ENTRIES} timed`, () => {
+    const home = newHome();
+    const group = join(home, ".grok", "sessions", FOLDERS.grok!);
+    for (let n = 0; n < 6000; n++) {
+      const dir = join(group, `s-${n}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "summary.json"), "{}");
+      writeFileSync(join(dir, "updates.jsonl"), "");
+    }
+    const { seen, opendir, lstat } = walking();
+    try { listSessions("grok", CWD, { home, env: {}, opendir, lstat }); }
+    finally { rmSync(home, { recursive: true, force: true }); }
+    expect(seen.lstats).toBeGreaterThan(MAX_STATS);
+    expect(seen.lstats).toBeLessThanOrEqual(MAX_ENTRIES);
+    expect(seen.walked).toBeLessThanOrEqual(MAX_WALK);
+  }, 60_000);
+
+  it("keeps the newest 50 of 16,000 Claude sessions with their per-session folders", () => {
+    const home = newHome();
+    const project = join(home, ".claude", "projects", claudeProjectDir(CWD));
+    mkdirSync(project, { recursive: true });
+    const written: { id: string; at: number }[] = [];
+    const count = 16000;
+    try {
+      for (let n = 0; n < count; n++) {
+        const id = `${n.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
+        const path = join(project, `${id}.jsonl`);
+        writeFileSync(path, `${JSON.stringify({ type: "user", cwd: CWD, message: { role: "user", content: `prompt ${n}` } })}\n`);
+        const at = (n * 7919) % count;
+        utimesSync(path, 1_790_000_000 + at, 1_790_000_000 + at);
+        mkdirSync(join(project, id));
+        written.push({ id, at });
+      }
+      const newest = written.sort((a, b) => b.at - a.at).slice(0, MAX_ROWS).map((entry) => entry.id);
+      expect(listSessions("claude", CWD, { home, env: {} }).map((row) => row.id)).toEqual(newest);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }, 240_000);
+
+  it(`stops walking a folder at ${MAX_WALK} entries, however many it holds`, () => {
+    const home = newHome();
+    const project = join(home, ".claude", "projects", claudeProjectDir(CWD));
+    mkdirSync(project, { recursive: true });
+    // a folder of more entries than the walk takes, all passed over, made up by the opendir seam
+    let walked = 0;
+    const opendir = (dir: string): Dir => {
+      if (dir !== project) return opendirSync(dir);
+      let n = 0;
+      return Object.assign(Object.create(null) as Dir, {
+        readSync: () => { if (n >= 4 * MAX_WALK) return null; walked++; const name = `folder-${n++}`; return { name, isDirectory: () => true, isFile: () => false } as unknown as Dirent; },
+        closeSync: () => {},
+      });
+    };
+    expect(listSessions("claude", CWD, { home, env: {}, opendir })).toEqual([]);
+    expect(walked).toBe(MAX_WALK);
   });
 
   it(`reads at most ${MAX_ENTRIES} entries of a folder, however many it holds`, () => {
@@ -374,8 +716,10 @@ describe("listSessions", () => {
     let looked = 0;
     const rows = listSessions("grok", CWD, { home, env: {}, lstat: (path) => { looked++; return lstatSync(path); } });
     expect(rows).toHaveLength(MAX_ROWS);
-    // two files' times for each of the 100 folders, taken once
-    expect(looked).toBe(200);
+    // each of the 100 folders timed once: at least one lstat (its files, else itself), at most its two
+    // files' times, never those times twice
+    expect(looked).toBeGreaterThanOrEqual(100);
+    expect(looked).toBeLessThanOrEqual(2 * 100);
   });
 
   it("finds Grok sessions in a native hashed cwd group", () => {
@@ -400,7 +744,7 @@ describe("listSessions", () => {
     for (let n = 0; n < MAX_STATS + 10; n++) grokSession("foreign-slug-aaa111", `foreign-${n}`, "/elsewhere", home);
     grokSession("target-slug-bbb222", ID(7), CWD, home);
     let stats = 0;
-    const rows = listSessions("grok", CWD, { home, env: {}, stat: (path) => { stats++; return statSync(path); } });
+    const rows = listSessions("grok", CWD, { home, env: {}, stat: (path, bigint) => { stats++; return statAs(path, bigint); } });
     expect(rows.map((row) => row.id)).toEqual([ID(7)]);
     expect(stats).toBeLessThan(20);
   });
