@@ -15,8 +15,9 @@ import { paneProcessRoots } from "../conversation.ts";
 import { processStartedAt } from "../process-start.ts";
 import { isOmpProcess, ompAgentDir } from "../omp.ts";
 import { processEnviron } from "../omo.ts";
-import { CLAUDE_CLEAR_INPUT_KEYS, claudeClearableDraft, claudeInputBoxContent, claudeInputDraft, claudeInputEmpty, claudeRestoredDraft, codexQuestionsCollapsed, heldCandidate, hermesInputDraft, lastChatSubmitted, noteSubmitted, parseInteractivePrompt, prepareCommandSend, viewportShowsLive } from "../prompt.ts";
+import { CLAUDE_CLEAR_INPUT_KEYS, claudeClearableDraft, claudeInputBoxContent, claudeInputDraft, claudeInputEmpty, claudeRestoredDraft, claudeRewindOpen, codexQuestionsCollapsed, chatOwnedInput, heldCandidate, hermesInputDraft, noteSubmitted, parseInteractivePrompt, prepareCommandSend, viewportShowsLive } from "../prompt.ts";
 import { registry } from "../dialogs/registry.ts";
+import { CLAUDE_REWIND_OPEN_MESSAGE } from "../dialogs/claude.ts";
 import { type PendingIdentity, PendingInputError } from "../pending-input.ts";
 import { startOpenCodeWatch, openCodeSkillsToType, skillsNotAttached } from "../opencode-native.ts";
 import { herdrSkillAttachIo, typeWithSkills } from "../opencode-skill-attach.ts";
@@ -168,8 +169,15 @@ export async function freeHermesInput(paneId: string, identity?: PendingIdentity
   return live;
 }
 
+/**
+ * Claude Code's input box as every chat send reads it first, before anything is typed. herdr reports
+ * Claude Code idle with its rewind dialog up, which shows no input box: on a Summarize row the message
+ * and its Enter would go to the add-context field and summarize the conversation. While any state of
+ * that dialog is on screen the send is refused, the Esc that clears a restored copy included.
+ */
 export async function claudeBoxReads(paneId: string): Promise<[string, string | null]> {
   const before = (await paneRead({ paneId, source: "detection", format: "text" })).text;
+  if (claudeRewindOpen(before)) throw new HerdrError("rewind_dialog_open", CLAUDE_REWIND_OPEN_MESSAGE);
   if (!claudeInputDraft(before, null)) return [before, null];
   const scrollBefore = await paneScrollInfo(paneId);
   const colors = (await paneRead({ paneId, source: "visible", format: "ansi" })).text;
@@ -192,7 +200,7 @@ export async function freeClaudeBox(paneId: string, working: boolean, authorize:
   const allowed = (): boolean => { try { authorize(); return true; } catch { return false; } };
   const [live, colors] = await claudeBoxReads(paneId);
   if (!claudeInputDraft(live, colors)) return;
-  if (working || claudeRestoredDraft(live, colors, lastChatSubmitted(paneId)) === null) {
+  if (working || claudeRestoredDraft(live, colors, await chatOwnedInput(paneId)) === null) {
     throw new InputDraftError(claudeClearableDraft(live, colors), undefined, claudeInputBoxContent(live));
   }
   if (deadline - Date.now() < RESTORED_CLEAR_RESERVE_MS) throw new HerdrError("submit_timeout", "Too little time was left to clear Claude Code's input box and send; nothing was typed");

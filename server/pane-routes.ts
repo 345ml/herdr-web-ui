@@ -16,6 +16,9 @@ import { GjcSdkLookupError } from "./gjc-sdk.ts";
 import { agentRename, HerdrError, layoutSetSplitRatio, paneClear, paneClose, paneFind, paneFocus, paneRead, paneRename, paneResize, paneScroll, paneScrollInfo, paneSelectionRead, paneSendKeys, paneSendText, paneSplit, paneSwap, paneSwapWith, paneZoom } from "./herdr/client.ts";
 import { paneContext, resolveAgent, versionSourceOf } from "./pane-context.ts";
 import { PasteImageError, readImageBody, savePaneImage } from "./paste.ts";
+import { handleRewindRequest } from "./rewind.ts";
+import { CLAUDE_REWIND_OPEN_MESSAGE } from "./dialogs/claude.ts";
+import { claudeRewindOpen } from "./prompt.ts";
 
 /** the native stores createServer was given; unset, each reader finds its own */
 export type PaneStores = { codexHome?: string; grokHome?: string; opencodeDb?: string; devinDbPath?: string; hermesHome?: string; openCodeStateDir?: string };
@@ -27,7 +30,11 @@ const READ_SOURCES = new Set<ReadSource>(["detection", "recent", "recent_unwrapp
 const READ_FORMATS = new Set<ReadFormat>(["ansi", "text"]);
 
 /** The answer for a pane route, or null when the path is not one. */
-export async function handlePaneRequest(request: Request, url: URL, pathname: string, options: PaneStores): Promise<Response | null> {
+export async function handlePaneRequest(request: Request, url: URL, pathname: string, options: PaneStores,
+  /** the pane's input order (core/input.ts): a rewind's keys wait behind a message in flight */
+  serialize: <T>(paneId: string, task: () => Promise<T>) => Promise<T> = (_paneId, task) => task()): Promise<Response | null> {
+  if (pathname === "/api/pane/rewind") return handleRewindRequest(request, serialize);
+
   if (pathname === "/api/pane/rename") {
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
     const payload = await readJsonObject<{ pane_id?: unknown; label?: unknown }>(request);
@@ -241,6 +248,12 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
     try {
       if (pathname === "/api/pane/input") {
         if (typeof payload.text !== "string") return badRequest("missing_text", "text is required");
+        // text over Claude Code's rewind dialog would land in a Summarize row's add-context field
+        // (core/composer.ts); keys still go, so Esc can close it
+        const { agent } = await paneContext(payload.pane_id).catch(() => ({ agent: null }));
+        if (agent === "claude" && claudeRewindOpen((await paneRead({ paneId: payload.pane_id, source: "detection", format: "text" })).text)) {
+          return conflictResponse("rewind_dialog_open", CLAUDE_REWIND_OPEN_MESSAGE);
+        }
         await paneSendText(payload.pane_id, payload.text);
       } else {
         if (!Array.isArray(payload.keys) || !payload.keys.every((key) => typeof key === "string")) return badRequest("missing_keys", "keys must be an array");
