@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -130,11 +130,11 @@ describe("listSessions", () => {
     let bytes = 0;
     const rows = listSessions("pi", CWD, {
       home, env: {},
-      readHead: (file, max) => {
+      readHead: (fd, max) => {
         const buffer = Buffer.alloc(max);
-        const fd = openSync(file, "r");
-        try { const read = readSync(fd, buffer, 0, max, 0); bytes += read; return buffer.subarray(0, read); }
-        finally { closeSync(fd); }
+        const read = readSync(fd, buffer, 0, max, 0);
+        bytes += read;
+        return buffer.subarray(0, read);
       },
     });
     expect(rows.map((row) => [row.id, row.firstMessage])).toEqual([[ID(5), "large prompt"]]);
@@ -240,15 +240,69 @@ describe("listSessions", () => {
     expect(resolutions).toBeLessThanOrEqual(MAX_STATS);
   });
 
+  it.skipIf(!SYMLINKS)("reads nothing from a SQLite store swapped for a link to another database after it was checked", () => {
+    const home = newHome();
+    install("hermes", home);
+    const elsewhere = newHome();
+    install("hermes", elsewhere);
+    const outside = new Database(join(elsewhere, ".hermes", "state.db"));
+    outside.exec("UPDATE messages SET content = 'outside the store' WHERE role = 'user'");
+    outside.close();
+    const checked = realpathSync(join(home, ".hermes", "state.db"));
+    let swapped = false;
+    const rows = listSessions("hermes", CWD, {
+      home, env: {},
+      // the database is checked, then swapped for a link to another one before it is opened
+      stat: (path) => {
+        const stat = statSync(path);
+        if (path === checked && !swapped) { swapped = true; rmSync(path); symlinkSync(join(elsewhere, ".hermes", "state.db"), path); }
+        return stat;
+      },
+    });
+    expect(swapped).toBe(true);
+    expect(rows.map((row) => row.firstMessage)).not.toContain("outside the store");
+    expect(rows).toEqual([]);
+  });
+
+  it.skipIf(!SYMLINKS)("gives a reader only the checked file, so no reader can read a file swapped in after the check", () => {
+    const home = newHome();
+    mkdirSync(piStore(home), { recursive: true });
+    const outside = join(root, `outside-reader-${homes}`);
+    mkdirSync(outside);
+    writeFileSync(join(outside, "secret.jsonl"), piHeader(ID(9)) + piPrompt("outside the store"));
+    const session = join(piStore(home), "session.jsonl");
+    writeFileSync(session, piHeader(ID(1)) + piPrompt("inside the store"));
+    const checked = realpathSync(session);
+    const rows = listSessions("pi", CWD, {
+      home, env: {},
+      stat: (path) => {
+        const stat = statSync(path);
+        if (path === checked) { rmSync(path); symlinkSync(join(outside, "secret.jsonl"), path); }
+        return stat;
+      },
+      // a reader that does no check of its own: given a path it would follow the link
+      readHead: ((target: number | string, max: number) => typeof target === "number"
+        ? (() => { const buffer = Buffer.alloc(max); return buffer.subarray(0, readSync(target, buffer, 0, max, 0)); })()
+        : readFileSync(target).subarray(0, max)) as never,
+    });
+    expect(rows.map((row) => row.firstMessage)).not.toContain("outside the store");
+    expect(rows).toEqual([]);
+  });
+
   it(`reads at most ${MAX_ENTRIES} entries of a folder, however many it holds`, () => {
     const home = newHome();
     mkdirSync(piStore(home), { recursive: true });
     for (let n = 0; n < MAX_ENTRIES + 500; n++) writeFileSync(join(piStore(home), `s-${n}.jsonl`), "");
     let looked = 0;
-    listSessions("pi", CWD, { home, env: {}, lstat: (path) => { looked++; return lstatSync(path); } });
+    try {
+      listSessions("pi", CWD, { home, env: {}, lstat: (path) => { looked++; return lstatSync(path); } });
+    } finally {
+      // removed here, inside this test's own time: on NTFS making and removing them takes seconds
+      rmSync(home, { recursive: true, force: true });
+    }
     expect(looked).toBeGreaterThan(MAX_STATS);
     expect(looked).toBeLessThanOrEqual(MAX_ENTRIES);
-  });
+  }, 60_000);
 
   it(`lists the newest sessions of a folder that holds more than ${MAX_STATS}, whatever their names`, () => {
     const home = newHome();
@@ -265,6 +319,63 @@ describe("listSessions", () => {
     }
     const newest = written.sort((a, b) => b.at - a.at).slice(0, MAX_ROWS).map((entry) => entry.id);
     expect(listSessions("claude", CWD, { home, env: {} }).map((row) => row.id)).toEqual(newest);
+  });
+
+  // more entries than the 4096 the listing once took: which ones it saw followed readdir order
+  for (const [count, folders] of [[2500, true], [5000, false]] as const) {
+    it(`keeps the newest ${MAX_ROWS} of ${count} Claude sessions${folders ? " with their per-session folders" : ""}, whatever the readdir order`, () => {
+      const home = newHome();
+      const project = join(home, ".claude", "projects", claudeProjectDir(CWD));
+      mkdirSync(project, { recursive: true });
+      const written: { id: string; at: number }[] = [];
+      for (let n = 0; n < count; n++) {
+        const id = `${n.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
+        const path = join(project, `${id}.jsonl`);
+        writeFileSync(path, `${JSON.stringify({ type: "user", cwd: CWD, message: { role: "user", content: `prompt ${n}` } })}\n`);
+        // the times follow neither the names nor the order the files were made in
+        const at = (n * 7919) % count;
+        utimesSync(path, 1_790_000_000 + at, 1_790_000_000 + at);
+        // Claude keeps a folder of subagent transcripts beside a session
+        if (folders) mkdirSync(join(project, id));
+        written.push({ id, at });
+      }
+      const newest = written.sort((a, b) => b.at - a.at).slice(0, MAX_ROWS).map((entry) => entry.id);
+      expect(listSessions("claude", CWD, { home, env: {} }).map((row) => row.id)).toEqual(newest);
+    }, 30_000);
+  }
+
+  it("checks the Grok session written last first, by its files' times rather than its folder's", () => {
+    const home = newHome();
+    const group = join(home, ".grok", "sessions", FOLDERS.grok!);
+    const session = (id: string, updated: number, folder: number) => {
+      const dir = join(group, id);
+      mkdirSync(dir, { recursive: true });
+      for (const name of ["summary.json", "updates.jsonl"]) {
+        const path = join(dir, name);
+        writeFileSync(path, name === "summary.json" ? JSON.stringify({ info: { id, cwd: CWD }, updated_at: new Date(updated * 1000).toISOString() }) : "");
+        utimesSync(path, updated, updated);
+      }
+      // a folder's time moves when a file is made in it, not while a session keeps writing to one
+      utimesSync(dir, folder, folder);
+    };
+    for (let n = 0; n < 300; n++) session(`idle-${n}`, 1_790_000_000 + n, 1_790_500_000 + n);
+    session("active", 1_790_900_000, 1_789_000_000);
+    expect(listSessions("grok", CWD, { home, env: {} })[0]?.id).toBe("active");
+  });
+
+  it("lists a hashed Grok group's session folders once", () => {
+    const home = newHome();
+    for (let n = 0; n < 100; n++) {
+      const dir = join(home, ".grok", "sessions", "long-slug-abc123", `s-${n}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "summary.json"), JSON.stringify({ info: { id: `s-${n}`, cwd: CWD }, updated_at: "2026-10-01T10:00:00Z" }));
+      writeFileSync(join(dir, "updates.jsonl"), "");
+    }
+    let looked = 0;
+    const rows = listSessions("grok", CWD, { home, env: {}, lstat: (path) => { looked++; return lstatSync(path); } });
+    expect(rows).toHaveLength(MAX_ROWS);
+    // two files' times for each of the 100 folders, taken once
+    expect(looked).toBe(200);
   });
 
   it("finds Grok sessions in a native hashed cwd group", () => {

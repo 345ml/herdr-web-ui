@@ -1,9 +1,13 @@
 /**
  * Earlier sessions of a folder, read from each agent's own store, newest first (#1314).
  *
- * Bounded by the #1147 rules: at most the first 64 KiB of any file is read; at most 4096 directory
- * entries are taken per listing, each with its own time (an lstat, bounded by those 4096, not counted
- * as a check), so the newest of them are checked first; at most 400 checks are made per listing, a
+ * Bounded by the #1147 rules: at most the first 64 KiB of any file is read; at most 16384 candidate
+ * entries (a session file, a Codex day folder, a Grok session folder: other entries, such as
+ * Claude's per-session folders, are passed over at no cost) are taken per listing, each with its own
+ * time (an lstat, up to three for a Grok session folder, bounded by those 16384, not counted as a
+ * check), and all of them are ordered by
+ * time before any is checked, so the newest are checked first whatever the readdir order; at most
+ * 400 checks are made per listing, a
  * check being one session file's resolution with its stat (spent whatever the resolution finds),
  * or one resolution or stat of a store, a folder or a database; at most 50 rows are returned, and
  * every path is resolved
@@ -15,7 +19,7 @@
  * A row's first message is prompt text: the route returns it only to a connection that may
  * drive (session-history-routes.ts), and it is never logged.
  */
-import { Database } from "bun:sqlite";
+import { constants as sqliteConstants, Database } from "bun:sqlite";
 import { closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, readSync, realpathSync, statSync, type BigIntStats, type Dir, type Dirent, type Stats } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
@@ -34,14 +38,16 @@ export const HEAD_BYTES = 64 * 1024;
 /**
  * At most this many checks for one listing. A check is one session file's resolution with its stat
  * (spent even when the resolution fails or lands outside the store), or one resolution or stat of a
- * store, a folder or a database. A listing's per-entry lstats are bounded by MAX_ENTRIES instead.
+ * store, a folder or a database. A listing's per-candidate lstats are bounded by MAX_ENTRIES instead.
  */
 export const MAX_STATS = 400;
 /**
- * At most this many directory entries are taken for one listing, every folder's together. It bounds
- * the lstats, sorting and checks; Bun's opendirSync still reads a whole folder from the kernel.
+ * At most this many candidate entries are taken for one listing, every folder's together: each costs
+ * one lstat (a Grok session folder up to three: its two files, else itself; none of them checks) and
+ * a place in the sort. Entries the listing passes over by name or type
+ * are not counted. Bun's opendirSync still reads a whole folder from the kernel before any of this.
  */
-export const MAX_ENTRIES = 4096;
+export const MAX_ENTRIES = 16384;
 /** At most this many sessions are returned. */
 export const MAX_ROWS = 50;
 const TITLE_CHARS = 200;
@@ -63,8 +69,8 @@ export interface SessionHistoryOptions {
   codexHome?: string;
   opencodeDb?: string;
   hermesHome?: string;
-  /** Reads at most `max` bytes from the start of an already resolved file, the one `checked` names (tests count the bytes). */
-  readHead?: (path: string, max: number, checked?: { dev: number; ino: number }) => Buffer;
+  /** Reads at most `max` bytes from the start of the checked file, opened (tests count the bytes): it gets the descriptor alone. */
+  readHead?: (fd: number, max: number) => Buffer;
   /** Stats a path the listing looks at (tests count the calls). */
   stat?: (path: string, bigint?: boolean) => Stats | BigIntStats;
   /** Resolves a path the listing looks at (tests count the calls); defaults to realpathSync. */
@@ -168,18 +174,26 @@ const inside = (root: string, path: string): boolean => {
   return child !== "" && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
 };
 
-function defaultReadHead(path: string, max: number, checked?: { dev: number; ino: number }): Buffer {
-  // O_NONBLOCK: a FIFO put where a file was is not waited on; O_NOFOLLOW: a link put there since
-  // the check is not followed. The file opened must be the one checked (a folder above it swapped
-  // for a link reaches another file by the same path)
-  const fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
+/** At most `max` bytes from the start of an open file. */
+function defaultReadHead(fd: number, max: number): Buffer {
+  const buffer = Buffer.alloc(max);
+  const length = readSync(fd, buffer, 0, max, 0);
+  return buffer.subarray(0, length);
+}
+
+/**
+ * The checked file, opened: O_NONBLOCK, so a FIFO put where a file was is not waited on; O_NOFOLLOW,
+ * so a link put there since the check is not followed; and the file opened must be the one checked
+ * (a folder above it swapped for a link reaches another file by the same path). A reader gets only
+ * this descriptor, so none can read another file.
+ */
+function openChecked(file: { real: string; dev: number; ino: number }): number {
+  const fd = openSync(file.real, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
   try {
     const opened = fstatSync(fd);
-    if (!opened.isFile() || (checked !== undefined && (opened.dev !== checked.dev || opened.ino !== checked.ino))) throw new Error("not the file that was checked");
-    const buffer = Buffer.alloc(max);
-    const length = readSync(fd, buffer, 0, max, 0);
-    return buffer.subarray(0, length);
-  } finally { closeSync(fd); }
+    if (!opened.isFile() || opened.dev !== file.dev || opened.ino !== file.ino) throw new Error("not the file that was checked");
+    return fd;
+  } catch (error) { closeSync(fd); throw error; }
 }
 
 /**
@@ -224,8 +238,12 @@ class Budget {
     try { return { real, stat: this.statOf(real) as Stats }; } catch { return null; }
   }
 
-  /** A folder's entries, unordered, as many as the listing has left to read; none for an unreadable one. */
-  list(dir: string): Dirent[] {
+  /**
+   * A folder's entries that `keep` takes (decided from the entry alone: its name and type), unordered,
+   * as many as the listing has left to take; none for an unreadable folder. An entry `keep` passes
+   * over (a Claude session's folder of subagent transcripts, say) costs no syscall and is not counted.
+   */
+  list(dir: string, keep: (entry: Dirent) => boolean = () => true): Dirent[] {
     const found: Dirent[] = [];
     let handle: Dir | undefined;
     try {
@@ -233,6 +251,7 @@ class Budget {
       while (this.entries < MAX_ENTRIES) {
         const entry = handle.readSync();
         if (entry === null) break;
+        if (!keep(entry)) continue;
         this.entries++;
         found.push(entry);
       }
@@ -273,7 +292,7 @@ class Budget {
 
 /** A store being read: its resolved root, the listing's budget, and how files are read. */
 class Scan {
-  constructor(readonly root: string, readonly budget: Budget, private readonly reader: (path: string, max: number, checked?: { dev: number; ino: number }) => Buffer) {}
+  constructor(readonly root: string, readonly budget: Budget, private readonly reader: (fd: number, max: number) => Buffer) {}
 
   get exhausted(): boolean { return this.budget.exhausted; }
 
@@ -288,7 +307,10 @@ class Scan {
   /** At most HEAD_BYTES of a resolved file, split in lines; `cut` when the file goes on past them. */
   head(file: Found): { lines: string[]; cut: boolean } {
     let head: Buffer;
-    try { head = this.reader(file.real, HEAD_BYTES, { dev: file.dev, ino: file.ino }); } catch { return { lines: [], cut: false }; }
+    try {
+      const fd = openChecked(file);
+      try { head = this.reader(fd, HEAD_BYTES); } finally { closeSync(fd); }
+    } catch { return { lines: [], cut: false }; }
     return { lines: head.toString("utf8").split("\n"), cut: head.length >= HEAD_BYTES && file.size > head.length };
   }
 
@@ -317,10 +339,10 @@ function scanOf(budget: Budget, path: string, read: SessionHistoryOptions["readH
 }
 
 /** These folders' entries newest first by their own times (a link not followed), within the listing's entry bound. */
-function newestEntries(budget: Budget, dirs: readonly string[], keep: (entry: Dirent) => boolean): string[] {
-  return dirs.flatMap((dir) => budget.list(dir).filter(keep).flatMap((entry) => {
+function newestEntries(budget: Budget, dirs: readonly string[], keep: (entry: Dirent) => boolean, timeOf: (path: string) => number | null = (path) => budget.modified(path)): string[] {
+  return dirs.flatMap((dir) => budget.list(dir, keep).flatMap((entry) => {
     const path = join(dir, entry.name);
-    const time = budget.modified(path);
+    const time = timeOf(path);
     return time === null ? [] : [{ path, time }];
   })).sort((a, b) => b.time - a.time).map((entry) => entry.path);
 }
@@ -502,7 +524,7 @@ function codexSessions(cwds: readonly string[], codexHome: string, budget: Budge
   const sessions = join(codexHome, "sessions");
   const scan = scanOf(budget, sessions, read);
   if (scan === null) return [];
-  const desc = (dir: string) => budget.list(dir).map((entry) => entry.name).filter((name) => /^\d+$/.test(name)).sort().reverse();
+  const desc = (dir: string) => budget.list(dir, (entry) => /^\d+$/.test(entry.name)).map((entry) => entry.name).sort().reverse();
   // newest day first, so the files looked at are the newest ones
   const files: Found[] = [];
   walk: for (const year of desc(sessions)) {
@@ -560,13 +582,19 @@ function grokSessions(cwds: readonly string[], home: string, env: Record<string,
   const grokHome = env["GROK_HOME"] || join(home, ".grok");
   const scan = scanOf(budget, join(grokHome, "sessions"), read);
   if (scan === null) return [];
+  // a session's folder keeps its time while the session writes to its files: the newest of its two
+  // files says when it was last written (two lstats, not checks), the folder's own time without them
+  const written = (dir: string): number | null => {
+    const times = ["summary.json", "updates.jsonl"].map((name) => budget.modified(join(dir, name))).filter((time): time is number => time !== null);
+    return times.length > 0 ? Math.max(...times) : budget.modified(dir);
+  };
   const sessionDirs = (group: string): string[] => {
     // newest first, within the listing's entry bound, so the checks go to the newest sessions
-    return newestEntries(budget, [join(scan.root, group)], (entry) => entry.isDirectory());
+    return newestEntries(budget, [join(scan.root, group)], (entry) => entry.isDirectory(), written);
   };
   const rows: Row[] = [];
-  const readGroup = (group: string) => {
-    for (const dir of sessionDirs(group)) {
+  const readGroup = (group: string, dirs: readonly string[] = sessionDirs(group)) => {
+    for (const dir of dirs) {
       if (scan.exhausted) break;
       const found = grokRow(scan, dir, cwds);
       if (found) rows.push(found);
@@ -581,7 +609,9 @@ function grokSessions(cwds: readonly string[], home: string, env: Record<string,
   for (const group of grokSessionGroups(grokHome)?.groups ?? []) {
     if (scan.exhausted) break;
     if (encoded.has(group) || cwds.every((spelling) => otherFolder(group, spelling, budget.platform))) continue;
-    if (grokGroupCwd(scan, sessionDirs(group), cwds)) readGroup(group);
+    // listed once: the same folders say whose group it is and are then read
+    const dirs = sessionDirs(group);
+    if (grokGroupCwd(scan, dirs, cwds)) readGroup(group, dirs);
   }
   // on a case-insensitive file system the cwd's group and its other-case spelling are one folder, read twice
   const ids = new Set<string>();
@@ -642,10 +672,17 @@ function withDatabase<T>(budget: Budget, storeDir: string, path: string, read: (
   const parent = real === null ? null : budget.resolve(dirname(path));
   if (real === null || parent === null) return null;
   if (!inside(root, real) || (parent !== root && !inside(root, parent)) || dirname(real) !== parent) return null;
-  if (!budget.stat(real)?.isFile()) return null;
+  const checked = budget.stat(real);
+  if (!checked?.isFile()) return null;
   let db: Database | undefined;
   try {
-    db = new Database(real, { readonly: true });
+    // the database opened must be the one checked: a link put in its place is not followed
+    // (SQLITE_OPEN_NOFOLLOW; SQLite's Unix VFS refuses it, its Windows one does not look), and after
+    // the open the path must still be the checked file (a folder above it swapped for a link, or
+    // Windows), so a swap between the check and the open lists nothing
+    db = new Database(real, sqliteConstants.SQLITE_OPEN_READONLY | sqliteConstants.SQLITE_OPEN_NOFOLLOW);
+    const opened = budget.stat(real);
+    if (!opened?.isFile() || opened.dev !== checked.dev || opened.ino !== checked.ino) return null;
     db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
     return read(db);
   } catch { return null; }
