@@ -22,6 +22,7 @@ import { checkTabMenu } from "./tab-menu-regression.ts";
 import { checkDefaultView } from "./default-view-regression.ts";
 import { checkComposerReconnect } from "./composer-reconnect-regression.ts";
 import { checkDroplet } from "./droplet-regression.ts";
+import { checkTerminalKeyboardSuggestions } from "./terminal-keyboard-suggestions-regression.ts";
 import { checkSplitView } from "./split-view-regression.ts";
 import { checkTakeOver } from "./take-over-regression.ts";
 import { checkAlertSound } from "./alert-sound-regression.ts";
@@ -98,6 +99,7 @@ export async function runUiContextChecks(): Promise<void> {
     await timed("checkDefaultView", () => checkDefaultView(browser!, origin));
     await timed("checkComposerReconnect", () => checkComposerReconnect(browser!, origin, paneB));
     await timed("checkDroplet", () => checkDroplet(browser!, origin));
+    await timed("checkTerminalKeyboardSuggestions", () => checkTerminalKeyboardSuggestions(browser!, origin));
     await timed("checkSplitView", () => checkSplitView(browser!, origin));
     await timed("checkTakeOver", () => checkTakeOver(browser!, origin));
     await timed("checkAlertSound", () => checkAlertSound(browser!, origin));

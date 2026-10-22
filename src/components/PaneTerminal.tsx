@@ -895,6 +895,10 @@ export function PaneTerminal({
     term.loadAddon(new WebLinksAddon((event, uri) => { if (isWebLink(uri) && !openWebRef.current(uri, event.shiftKey)) openWebLink(uri); }));
     term.registerLinkProvider(terminalFileLinkProvider(() => term.buffer.active, (path, event) => { if (linkPressed(event)) openFileRef.current?.(path); }));
     term.open(host);
+    // xterm turns autocorrect, autocapitalize and spellcheck off on its helper textarea; an Android
+    // keyboard still shows its word strip there unless the field also says autocomplete="off",
+    // the one attribute Chrome turns into the keyboard's NO_SUGGESTIONS
+    term.textarea?.setAttribute("autocomplete", "off");
     const syncInputViewport = (): void => {
       // only a grid this browser does not size (a mirror, an observer's, a followed one) scrolls its helper
       // out of view; a grid it drives keeps stock xterm: the browser brings the prompt back into view, and a
