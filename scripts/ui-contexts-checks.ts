@@ -16,6 +16,7 @@ import { checkNotificationStartup } from "./notification-startup-regression.ts";
 import { checkNotificationView } from "./notification-view-regression.ts";
 import { checkMobileViewport } from "./mobile-viewport-regression.ts";
 import { checkTerminalPinch } from "./terminal-pinch-regression.ts";
+import { checkKeyBarKeepsKeyboardDown } from "./keybar-focus-regression.ts";
 import { checkMobileTabs } from "./mobile-tabs-regression.ts";
 import { checkHeaderLensSwitch } from "./header-lens-switch-regression.ts";
 import { checkTabMenu } from "./tab-menu-regression.ts";
@@ -94,6 +95,7 @@ export async function runUiContextChecks(): Promise<void> {
     await timed("checkNotificationView", () => checkNotificationView(browser!, origin));
     await timed("checkMobileViewport", () => checkMobileViewport(browser!, origin, paneB));
     await timed("checkTerminalPinch", () => checkTerminalPinch(browser!, origin, paneB));
+    await timed("checkKeyBarKeepsKeyboardDown", () => checkKeyBarKeepsKeyboardDown(browser!, origin));
     await timed("checkMobileTabs", () => checkMobileTabs(browser!, origin));
     await timed("checkHeaderLensSwitch", () => checkHeaderLensSwitch(browser!, origin));
     await timed("checkTabMenu", () => checkTabMenu(browser!, origin));
