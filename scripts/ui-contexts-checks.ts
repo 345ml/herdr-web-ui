@@ -20,6 +20,7 @@ import { checkMobileTabs } from "./mobile-tabs-regression.ts";
 import { checkHeaderLensSwitch } from "./header-lens-switch-regression.ts";
 import { checkTabMenu } from "./tab-menu-regression.ts";
 import { checkDefaultView } from "./default-view-regression.ts";
+import { checkTerminalInputSpacing } from "./terminal-input-spacing-regression.ts";
 import { checkComposerReconnect } from "./composer-reconnect-regression.ts";
 import { checkDroplet } from "./droplet-regression.ts";
 import { checkTerminalKeyboardSuggestions } from "./terminal-keyboard-suggestions-regression.ts";
@@ -97,6 +98,7 @@ export async function runUiContextChecks(): Promise<void> {
     await timed("checkHeaderLensSwitch", () => checkHeaderLensSwitch(browser!, origin));
     await timed("checkTabMenu", () => checkTabMenu(browser!, origin));
     await timed("checkDefaultView", () => checkDefaultView(browser!, origin));
+    await timed("checkTerminalInputSpacing", () => checkTerminalInputSpacing(browser!, origin));
     await timed("checkComposerReconnect", () => checkComposerReconnect(browser!, origin, paneB));
     await timed("checkDroplet", () => checkDroplet(browser!, origin));
     await timed("checkTerminalKeyboardSuggestions", () => checkTerminalKeyboardSuggestions(browser!, origin));
