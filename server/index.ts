@@ -12,7 +12,7 @@ import { readHerdrProfiles, type HerdrMachineProfile } from "./herdr-profiles.ts
 import { accessSync, constants, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { AgentKind, HealthAuth, HerdrPane, PanePlan, PendingMessage, ProjectFavicon } from "../shared/protocol.ts";
+import type { HealthAuth, HerdrPane, PanePlan, PendingMessage, ProjectFavicon } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { authClient, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isServeOwnerRequest, lanExposed } from "./access.ts";
@@ -26,12 +26,12 @@ import { compressResponse } from "./compress.ts";
 import { claudePaneSession } from "./conversation.ts";
 import { handleTasksRequest } from "./tasks-routes.ts";
 import { within } from "./claude-subagents.ts";
-import { SHELL_AGENTS, ShellAgentLocator } from "./shell-agent.ts";
+import { ShellAgentLocator } from "./shell-agent.ts";
+import { handleAgentsRequest } from "./agents-routes.ts";
 import { claudeSessionTempDir } from "./claude-store.ts";
 import { fileResponse, findFile, crossSiteFileRead, forgetPageMedia, pageMediaResponse, pageMediaSource, PAGE_MEDIA_PATH } from "./file-view.ts";
 import { findProjectFavicon } from "./project-favicon.ts";
 import {
-  agentManifests,
   herdrSocketPath,
   paneGet,
   ping,
@@ -88,26 +88,6 @@ export const SUBMIT_DEADLINE_MS = 45_000;
 const DRAFT_CLEAR_WAIT_MS = 1_500;
 const DRAFT_CLEAR_POLL_MS = 50;
 
-
-const AGENT_LABELS: Record<string, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  omp: "Oh My Pi",
-  omo: "OmO",
-  gjc: "Gajae Code",
-  pi: "pi",
-  gemini: "Gemini CLI",
-  cursor: "Cursor",
-  opencode: "OpenCode",
-  copilot: "GitHub Copilot",
-  kimi: "Kimi",
-  amp: "Amp",
-  hermes: "Hermes",
-  grok: "Grok",
-  agy: "Antigravity",
-  devin: "Devin",
-  cmd: "Command Code",
-};
 
 /** The temp folder of the Claude Code session in a pane, or null when the pane runs none or it has none. */
 async function claudeTempFolder(paneId: string): Promise<string | null> {
@@ -512,27 +492,8 @@ export function createServer(
         }
       }
 
-      if (pathname === "/api/agents") {
-        setRequestRoute(pathname);
-        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
-        try {
-          const kinds = new Set((await agentManifests()).manifests.map((manifest) => manifest.agent));
-          kinds.add("omp");
-          kinds.add("claude");
-          // not herdr kinds: offered where this server can run them (see shell-agent.ts)
-          // the locator the start asks too, so what is offered is what starts
-          const shellStarted = new Set<string>();
-          for (const kind of Object.keys(SHELL_AGENTS)) if (await shellAgents.executable(kind)) shellStarted.add(kind);
-          for (const kind of shellStarted) kinds.add(kind);
-          const agents: AgentKind[] = [...kinds]
-            // an agent's command is its kind; herdr starts the others in its own environment, so only this server's PATH speaks for them
-            .map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind, installed: shellStarted.has(kind) || Bun.which(kind, { PATH: process.env["PATH"] ?? "" }) !== null }))
-            .sort((left, right) => left.label.localeCompare(right.label) || left.kind.localeCompare(right.kind));
-          return jsonResponse({ agents });
-        } catch (error) {
-          return errorResponse(error);
-        }
-      }
+      const agentsResponse = await handleAgentsRequest(request, pathname, shellAgents);
+      if (agentsResponse) return agentsResponse;
 
       const integrationsResponse = await handleIntegrationsRequest(request, pathname);
       if (integrationsResponse) return integrationsResponse;

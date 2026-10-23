@@ -657,7 +657,6 @@ export interface ConversationResponse {
 
 export type { PluginActionContext, PluginAction, PluginActions, PluginActionsResponse, PluginActionRequest, PluginActionResult } from "./plugins.ts";
 
-/** GET /api/agents: one agent kind herdr can start (`agent.start` kind), with a display label. */
 /** GET /api/workspace/directories: the folders inside one directory, for the folder browser. */
 export interface DirectoryListing {
   /** the directory listed, absolute */
@@ -790,12 +789,7 @@ export interface RepoDiffFilePatch {
   limits: { max_patch_bytes: number; context_lines: number };
 }
 
-export interface AgentKind {
-  kind: string;
-  label: string;
-  /** whether the server finds the agent's command (its kind) on its PATH; absent from an older bridge */
-  installed?: boolean;
-}
+export type { AgentKind } from "./agents.ts";
 
 export type { AgentIntegration, IntegrationsResponse } from "./integrations.ts";
 
