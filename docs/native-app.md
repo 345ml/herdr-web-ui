@@ -2,7 +2,8 @@
 
 Status: Phase 1 step 2 built for iOS (checked in a simulator) and Android (checked in an emulator),
 2026-10-19. To run them, see [The app (app/)](#the-app-app) and
-[The Android app](#the-android-app).
+[The Android app](#the-android-app). Step 3, the push relay, is built in
+[`push-relay/`](../push-relay/README.md) with its tests, 2026-10-23, and not deployed yet.
 
 Ovis ships as a store app for iOS first, Android later. The goal is reach: the app is
 found in the App Store and installs in one tap, where the web app needs "Add to Home Screen". It
@@ -43,23 +44,29 @@ whole alert policy (the wait before an alert, no alert while a window is in use,
 choices) and changes little:
 
 1. The app registers with APNs and gets a device token.
-2. The app sends the token to the relay, which returns an endpoint URL holding an opaque ID for
-   that token (`https://<relay>/v1/push/<id>`). The token itself never leaves the relay.
+2. For each PC, the app sends the token and that PC's VAPID public key (`GET /api/push`, the key
+   a browser passes to `pushManager.subscribe`) to the relay, which returns an endpoint URL
+   holding an opaque ID for them (`https://push.ovis.sh/v1/push/<id>`). The token itself never
+   leaves the relay. The app keeps that endpoint for the PC rather than registering again at
+   every launch.
 3. The app makes a P-256 key pair and an auth secret, keeps the private half in the keychain
    shared with its Notification Service Extension, and hands `{ endpoint, keys }` to the web
    client, which subscribes with it in place of `pushManager.subscribe`.
 4. The PC encrypts each alert for those keys (RFC 8291, as today) and signs it with its VAPID key
-   (RFC 8292). The relay pins the first VAPID key that pushes to an endpoint and refuses others,
-   so knowing an endpoint is not enough to send to a phone. It also rate-limits per endpoint.
+   (RFC 8292). The relay pins the key given at registration to the endpoint and refuses any
+   other, so knowing an endpoint is not enough to send to a phone. It also rate-limits per
+   endpoint and per phone, and limits registrations.
 5. The relay wraps the ciphertext in a `mutable-content` APNs push. The Notification Service
    Extension (a small Swift target) decrypts it and shows the title and body. A push it cannot
    decrypt shows a generic "herdr needs you" line.
 6. APNs telling the relay a token is gone becomes a 410 to the PC, which already deletes a gone
    subscription.
 
-The relay's code lives in this repo next to `telemetry/`, open so anyone can run their own, and
-keeps no logs, like the telemetry Worker. Its APNs key is a secret of the project's Cloudflare
-account. Android (FCM) gets a second route in the same Worker later.
+The relay's code lives in this repo next to `telemetry/`, in
+[`push-relay/`](../push-relay/README.md), open so anyone can run their own, and keeps no logs,
+like the telemetry Worker. It answers at `push.ovis.sh`. Its APNs key is a secret of the
+project's Cloudflare account (`APNS_KEY`). Android (FCM) gets a second route in the same Worker
+later.
 
 ## Phase 1: first store release
 
@@ -69,7 +76,9 @@ account. Android (FCM) gets a second route in the same Worker later.
 2. `app/`: Capacitor project, connect screen, QR scan, demo mode. Built 2026-10-19, see
    [The app (app/)](#the-app-app). QR scanning still needs a physical iPhone (the simulator
    has no camera).
-3. Relay Worker with tests (VAPID pinning, rate limit, gone tokens).
+3. Relay Worker with tests (VAPID pinning, rate limit, gone tokens). Built 2026-10-23 in
+   [`push-relay/`](../push-relay/README.md), at `push.ovis.sh`; deploying it needs the D1
+   database and the APNs secrets its README lists, then one real push (`push-relay/test-push.ts`).
 4. `src/lib/push.ts`: subscribe through the native bridge inside the app.
 5. Notification Service Extension that decrypts.
 6. App Store listing, privacy answers, review notes pointing at the demo mode.
@@ -345,6 +354,7 @@ Still open on Android:
   Transport Security exception that review must accept. `https` through `tailscale serve` needs
   none.
 - Several PCs: the app should list them, as the remote PCs feature does in the browser.
-- Not decided: the relay's domain. The app is Ovis, with the ID `sh.ovis.app`.
+- The relay's domain is `push.ovis.sh` (decided 2026-10-23). The app is Ovis, with the ID
+  `sh.ovis.app`.
 - The macbook is shared with other sessions (a ChatGPT CUA was running on 2026-10-18): check it
   is free before booting a simulator there.
