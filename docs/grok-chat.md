@@ -7,9 +7,10 @@ model calls. Reasoning, images and child-session expansion are outside this firs
 **Supported executable:** chat follows any Grok executable named `grok` or `grok-…`,
 including a versioned build such as `grok-1.0.52-linux-x86_64` or `grok-macos-aarch64`,
 and a binary replaced while it was still running. Linux reads the held file from `/proc`.
-macOS reads it from `lsof`, and that process's home from `ps`. Windows shows the terminal
-view. Lifecycle checks used Grok 1.0.50 and Herdr 0.9.3. No installer changes the Grok
-configuration.
+macOS reads it from `lsof`, and that process's home from the kernel's copy of its
+environment. Windows shows the terminal view. Lifecycle checks used Grok 1.0.50 and Herdr
+0.9.3 on Linux; on macOS the binding is tested against real `lsof` with a stand-in process.
+No installer changes the Grok configuration.
 
 Chat shows Thinking or Working from the bound transcript's current turn even if Herdr
 reports ready or done. A native completion clears that indicator; late background tool
@@ -20,9 +21,10 @@ turn or rewind replaces it. Unavailable native history is explicitly marked in C
 ## Finding the active session
 
 The bridge reads the one foreground Grok process's environment for `GROK_HOME`, or
-`HOME/.grok` when unset: `/proc/<pid>/environ` on Linux, that process's `ps -E` line on
-macOS, never the bridge's own home. A relative `GROK_HOME` does not fall through to `HOME`. The pane's Grok process is found
-in Herdr's foreground list, and chat needs exactly one. Foreground discovery and the
+`HOME/.grok` when unset: `/proc/<pid>/environ` on Linux, `sysctl` `KERN_PROCARGS2` on
+macOS, never the bridge's own home. A relative `GROK_HOME` does not fall through to
+`HOME`. The pane's Grok process is found in Herdr's foreground list, and chat needs exactly
+one. Foreground discovery and the
 executable check both accept `grok` or `grok-…`, with packaging suffixes removed; neither
 requires a particular build number or a numeric suffix. On macOS the executable is the
 first `txt` entry from `lsof` (later `txt` lines are mapped files such as dyld). A
@@ -62,8 +64,8 @@ send ordinary sessions to the terminal.
 On macOS, `lsof -nPbw -a -p <pid> -FfDin` lists the holds: only numeric
 descriptors count (`cwd`, `rtd` and `mem` do not), and the device and inode in that
 listing must match the named file. Its write time comes from the named file only after
-that identity matches. A missing device or inode is not a match. `lsof` and `ps` are
-awaited child processes with a three-second timeout.
+that identity matches. A missing device or inode is not a match. The `lsof` read has a
+three-second timeout.
 
 The newest file only confirms Herdr's ID; it never chooses another session. A missing held
 file or a newer write to another held session uses the terminal view. An in-TUI `/resume`

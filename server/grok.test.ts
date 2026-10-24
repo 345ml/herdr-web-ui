@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { forgetTranscriptState, HistoryChanged, transcriptPage } from "./conversation.ts";
 import { grokToolOutput, grokProjection, GrokUnavailable, parseGrokTranscript } from "./grok.ts";
-import { grokHeldSessionsFromLsof, grokHomeFromEnvironment, grokHomeFromPsLine, grokLsofEvidence, grokPaneProcesses, grokTranscriptPath, isGrokExecutable, resolveGrokStore } from "./grok-store.ts";
+import { darwinProcess } from "./claude-store.ts";
+import { grokHeldSessionsFromLsof, grokHomeFromEnvironment, grokLsofEvidence, grokPaneProcesses, grokTranscriptPath, isGrokExecutable, resolveGrokStore } from "./grok-store.ts";
 import * as herdr from "./herdr/client.ts";
 import type { ConversationPart, HerdrPane } from "../shared/protocol.ts";
 
@@ -226,8 +227,8 @@ describe("exact store lookup", () => {
       expect(grokPaneProcesses({ foreground_processes: [{ pid: 11, argv: [exe] }] })).toEqual([]);
     }
   });
-  // These resolver tests need Linux /proc/<pid>/fd and /proc/<pid>/exe.
-  // macOS uses the same binding rule with lsof and ps, covered below.
+  // These resolver tests hold real descriptors in a real process: /proc on Linux, lsof and the
+  // kernel's environment on macOS. The process's own GROK_HOME names the store.
   for (const scenario of [
     { name: "older files stay open", otherGroup: "group", otherSession: "older-session", otherMtime: 100, binds: true },
     { name: "/resume writes a newer session", otherGroup: "group", otherSession: "resumed-session", otherMtime: 300, binds: false },
@@ -248,7 +249,7 @@ describe("exact store lookup", () => {
     { name: "another file is held beside an older session's events file", otherGroup: "group", otherSession: "older-session", otherMtime: 100, binds: true, heldLock: "beside events.jsonl" },
     { name: "another file is held in a session folder with no events file", otherGroup: "group", otherSession: "older-session", otherMtime: 100, binds: false, heldLock: "alone" },
   ] as { name: string; otherGroup: string; otherSession: string; otherMtime: number; binds: boolean; change?: string; replacement?: string; nested?: boolean; heldLock?: string }[]) {
-    test.skipIf(process.platform !== "linux" || !existsSync("/proc/self/fd"))(`resolves Herdr's session safely when ${scenario.name}`, async () => {
+    test.skipIf(process.platform !== "darwin" && (process.platform !== "linux" || !existsSync("/proc/self/fd")))(`resolves Herdr's session safely when ${scenario.name}`, async () => {
       const home = realpathSync(root);
       const transcript = join(home, "sessions", "%2Ffiction", session, "updates.jsonl");
       const current = join(dirname(transcript), "events.jsonl");
@@ -289,7 +290,9 @@ describe("exact store lookup", () => {
         held.push(nested);
       }
       const fds = held.map((file) => openSync(file, "r"));
-      const child = spawn(executable, ["-e", "process.stdin.resume()"], { stdio: ["pipe", "ignore", "ignore", ...fds] });
+      const child = spawn(executable, ["-e", "process.stdin.resume()"], {
+        stdio: ["pipe", "ignore", "ignore", ...fds], env: { ...process.env, HOME: "/bridge-home", GROK_HOME: home },
+      });
       const pane: HerdrPane = {
         pane_id: "grok-fixture", agent: "grok", agent_status: "ready", focused: false,
         revision: 0, tab_id: "tab-fixture", terminal_id: "terminal-fixture", workspace_id: "workspace-fixture",
@@ -304,7 +307,7 @@ describe("exact store lookup", () => {
         apply(target, receiver, args) {
           const replacement = "replacement" in scenario ? scenario.replacement : null;
           const file = replacement === "current" ? current : other;
-          // Replace after /proc's link was read, before the path's stat is sampled.
+          // Replace after /proc's link or lsof's listing was read, before the path's stat is sampled.
           if (replacement && !replaced && args[0] === file) {
             replaced = true;
             unlinkSync(file);
@@ -324,7 +327,7 @@ describe("exact store lookup", () => {
           renameSync(other, join(dirname(other), "old-events.jsonl"));
           renameSync(dirname(other), join(dirname(dirname(other)), ".archived-older"));
         }
-        expect(await resolveGrokStore(pane, home)).toBe(scenario.binds ? transcript : null);
+        expect(await resolveGrokStore(pane)).toBe(scenario.binds ? transcript : null);
       } finally {
         stats.mockRestore();
         info.mockRestore();
@@ -365,16 +368,6 @@ describe("exact store lookup", () => {
     expect(grokHomeFromEnvironment("HOME=/user\0")).toBe("/user/.grok");
     expect(grokHomeFromEnvironment("USERPROFILE=/user\0")).toBe("/user/.grok");
     expect(grokHomeFromEnvironment("HOME=/user\0GROK_HOME=relative\0")).toBeNull();
-  });
-  test("a ps environment line uses the last absolute home and never the bridge", () => {
-    expect(grokHomeFromPsLine("/bin/grok HOME=/Users/me")).toBe("/Users/me/.grok");
-    expect(grokHomeFromPsLine("/bin/grok HOME=/Users/me GROK_HOME=/custom/store")).toBe("/custom/store");
-    expect(grokHomeFromPsLine("/bin/grok GROK_HOME=/first HOME=/Users/me GROK_HOME=/second")).toBe("/second");
-    expect(grokHomeFromPsLine("/bin/grok HOME=/Users/me GROK_HOME=relative")).toBeNull();
-    expect(grokHomeFromPsLine("/bin/grok USERPROFILE=/Users/me")).toBe("/Users/me/.grok");
-    expect(grokHomeFromPsLine("/bin/grok GROK_HOME=/custom store TERM=xterm")).toBe("/custom store");
-    expect(grokHomeFromPsLine("/bin/grok GROK_HOME=/custom NAME=/cut")).toBe("/custom");
-    expect(grokHomeFromPsLine("/bin/grok")).toBeNull();
   });
 });
 
@@ -469,27 +462,31 @@ describe("macOS held-file evidence", () => {
   };
 
   async function darwin(store: { home: string; listing: string }, options: {
-    configured?: string; ps?: string; lsofExit?: number; psExit?: number;
+    configured?: string; environment?: string | null; lsofExit?: number; stdout?: string;
     processes?: { pid: number; argv?: string[] | null }[]; platform?: string;
-    sessionPane?: HerdrPane; throwOn?: "lsof" | "ps"; executable?: string;
+    sessionPane?: HerdrPane; throwOnSpawn?: boolean; executable?: string;
   } = {}) {
     const calls: string[][] = [];
+    const timeouts: (number | undefined)[] = [];
     const info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({
       pane_id: "grok-fixture", foreground_processes: (options.processes ?? [{ pid: 4242, argv: [exe] }]).map((process) => ({ name: "grok", ...process })),
     });
+    const environments: number[] = [];
+    const environment = spyOn(darwinProcess, "environment").mockImplementation((pid) => {
+      environments.push(pid);
+      return options.environment === undefined ? `HOME=/bridge-home\0GROK_HOME=${store.home}\0` : options.environment;
+    });
     const spawned = spyOn(Bun, "spawn").mockImplementation(((argv: string[], spawnOptions: { timeout?: number }) => {
       calls.push(argv);
-      expect(spawnOptions.timeout).toBe(3000);
-      const isPs = argv[0] === "/bin/ps";
-      if (options.throwOn === (isPs ? "ps" : "lsof")) throw new Error("host failed");
-      const text = options.executable ? store.listing.replace(`n${exe}\n`, `n${options.executable}\n`) : store.listing;
-      const stdout = isPs ? (options.ps ?? `GROK_HOME=${store.home}`) : text;
-      return { stdout: new Response(stdout).body, exited: Promise.resolve(isPs ? (options.psExit ?? 0) : (options.lsofExit ?? 0)), kill: () => {} };
+      timeouts.push(spawnOptions.timeout);
+      if (options.throwOnSpawn) throw new Error("host failed");
+      const text = options.stdout ?? (options.executable ? store.listing.replace(`n${exe}\n`, `n${options.executable}\n`) : store.listing);
+      return { stdout: new Response(text).body, exited: Promise.resolve(options.lsofExit ?? 0), kill: () => {} };
     }) as unknown as typeof Bun.spawn);
     try {
       const result = await resolveGrokStore(options.sessionPane ?? pane(), options.configured, options.platform ?? "darwin");
-      return { result, calls, askedProcessInfo: info.mock.calls.length > 0 };
-    } finally { spawned.mockRestore(); info.mockRestore(); }
+      return { result, calls, timeouts, environments, askedProcessInfo: info.mock.calls.length > 0 };
+    } finally { spawned.mockRestore(); environment.mockRestore(); info.mockRestore(); }
   }
 
   test("binds Herdr's session when its held events file is strictly newest", async () => {
@@ -499,19 +496,18 @@ describe("macOS held-file evidence", () => {
     process.env.HOME = "/bridge-home";
     process.env.GROK_HOME = "/bridge-grok";
     try {
-      const { result, calls } = await darwin(store, { ps: `/usr/local/bin/grok HOME=/bridge-home GROK_HOME=${store.home}` });
+      const { result, calls, timeouts, environments } = await darwin(store);
       expect(result).toBe(store.transcript);
-      expect(calls).toEqual([
-        ["/usr/sbin/lsof", "-nPbw", "-a", "-p", "4242", "-FfDin"],
-        ["/bin/ps", "-E", "-ww", "-p", "4242", "-o", "command="],
-      ]);
+      expect(calls).toEqual([["/usr/sbin/lsof", "-nPbw", "-a", "-p", "4242", "-FfDin"]]);
+      expect(timeouts).toEqual([3000]);
+      expect(environments).toEqual([4242]);
     } finally {
       if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
       if (previousGrok === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = previousGrok;
     }
   });
 
-  test("uses HOME/.grok from ps and a configured home skips ps", async () => {
+  test("uses HOME/.grok from the process and a configured home skips its environment", async () => {
     const userHome = join(realpathSync(root), "macos-user");
     const home = join(userHome, ".grok");
     const transcript = join(home, "sessions", "group", session, "updates.jsonl");
@@ -521,10 +517,17 @@ describe("macOS held-file evidence", () => {
     writeFileSync(current, "");
     const stat = identity(current);
     const store = { home, listing: listing(record("4", current, stat)) };
-    expect((await darwin(store, { ps: `/bin/grok HOME=${userHome}` })).result).toBe(transcript);
-    const configured = await darwin(store, { configured: home, ps: "GROK_HOME=/wrong" });
+    expect((await darwin(store, { environment: `HOME=${userHome}\0` })).result).toBe(transcript);
+    // a NOTE holding "GROK_HOME=" is NOTE's value, not a home
+    expect((await darwin(store, { environment: `NOTE=x GROK_HOME=/wrong\0HOME=${userHome}\0` })).result).toBe(transcript);
+    // an empty GROK_HOME falls back to HOME; a relative one does not
+    expect((await darwin(store, { environment: `GROK_HOME=\0HOME=${userHome}\0` })).result).toBe(transcript);
+    expect((await darwin(store, { environment: `GROK_HOME=relative\0HOME=${userHome}\0` })).result).toBeNull();
+    // a home the held file does not live in does not bind
+    expect((await darwin(store, { environment: `GROK_HOME=${join(userHome, "other")}\0` })).result).toBeNull();
+    const configured = await darwin(store, { configured: home, environment: "GROK_HOME=/wrong\0" });
     expect(configured.result).toBe(transcript);
-    expect(configured.calls.map((argv) => argv[0])).toEqual(["/usr/sbin/lsof"]);
+    expect(configured.environments).toEqual([]);
   });
 
   for (const scenario of [
@@ -539,7 +542,9 @@ describe("macOS held-file evidence", () => {
   }
 
   test("does not select a different session from held files", async () => {
-    const store = place(300, "resumed-session");
+    // the other held session is older, so each null below has its own reason
+    const store = place(100, "resumed-session");
+    expect((await darwin(store)).result).toBe(store.transcript);
     const withoutReported = store.listing.split("\n").filter((line) => !line.endsWith(`${session}/events.jsonl`)).join("\n");
     expect((await darwin({ ...store, listing: withoutReported })).result).toBeNull();
     const second = join(store.home, "sessions", "other-group", session, "updates.jsonl");
@@ -548,19 +553,41 @@ describe("macOS held-file evidence", () => {
     expect((await darwin(store)).result).toBeNull();
   });
 
+  test("the held directory must be the one with the transcript", async () => {
+    const store = place(100);
+    const elsewhere = join(store.home, "sessions", "other-group", session, "events.jsonl");
+    mkdirSync(dirname(elsewhere), { recursive: true });
+    writeFileSync(elsewhere, "");
+    utimesSync(elsewhere, 200, 200);
+    const fd = String(10 + store.current.length);
+    const movedHold = store.listing.replace(record(fd, store.current, identity(store.current)).join("\n"), record(fd, elsewhere, identity(elsewhere)).join("\n"));
+    expect(movedHold).not.toBe(store.listing);
+    expect((await darwin({ ...store, listing: movedHold })).result).toBeNull();
+    unlinkSync(store.transcript);
+    expect((await darwin(store)).result).toBeNull();
+  });
+
   test("deleted, renamed, and replaced held files stay on the terminal", async () => {
     const store = place(100);
-    const deleted = store.listing.replaceAll(`${session}/events.jsonl\n`, `${session}/events.jsonl (deleted)\n`);
-    expect((await darwin({ ...store, listing: deleted })).result).toBeNull();
-    const renamed = store.listing.replaceAll(`${session}/events.jsonl\n`, `${session}/events.jsonl.old\n`);
-    expect((await darwin({ ...store, listing: renamed })).result).toBeNull();
-    const stat = identity(store.current);
-    const marker = `D0x${stat.dev.toString(16)}\ni${stat.ino}\nn${store.current}\n`;
-    const replaced = store.listing.replace(marker, `D0x${stat.dev.toString(16)}\ni${stat.ino + 1}\nn${store.current}\n`);
-    expect(replaced).not.toBe(store.listing);
-    expect((await darwin({ ...store, listing: replaced })).result).toBeNull();
-    const noDevice = store.listing.replace(marker, `n${store.current}\n`);
-    expect((await darwin({ ...store, listing: noDevice })).result).toBeNull();
+    for (const file of [store.current, store.other]) {
+      const deleted = store.listing.replaceAll(`n${file}\n`, `n${file} (deleted)\n`);
+      expect(deleted).not.toBe(store.listing);
+      expect((await darwin({ ...store, listing: deleted })).result).toBeNull();
+      const renamed = store.listing.replaceAll(`n${file}\n`, `n${file}.old\n`);
+      expect((await darwin({ ...store, listing: renamed })).result).toBeNull();
+      const stat = identity(file);
+      const marker = `D0x${stat.dev.toString(16)}\ni${stat.ino}\nn${file}\n`;
+      const replaced = store.listing.replaceAll(marker, `D0x${stat.dev.toString(16)}\ni${stat.ino + 1}\nn${file}\n`);
+      expect(replaced).not.toBe(store.listing);
+      expect((await darwin({ ...store, listing: replaced })).result).toBeNull();
+      const noDevice = store.listing.replaceAll(marker, `i${stat.ino}\nn${file}\n`);
+      expect((await darwin({ ...store, listing: noDevice })).result).toBeNull();
+      const noInode = store.listing.replaceAll(marker, `D0x${stat.dev.toString(16)}\nn${file}\n`);
+      expect((await darwin({ ...store, listing: noInode })).result).toBeNull();
+    }
+    // lsof keeps naming an unlinked file by its old path
+    unlinkSync(store.other);
+    expect((await darwin(store)).result).toBeNull();
   });
 
   test("a mapped file listed as txt is not the executable", async () => {
@@ -569,13 +596,39 @@ describe("macOS held-file evidence", () => {
     expect((await darwin(store, { executable: "/usr/local/bin/grok (deleted)" })).result).toBe(store.transcript);
   });
 
-  test("a failed host command is an unreadable listing", async () => {
+  test("a failed, oversized or unreadable read is no listing", async () => {
     const store = place(100);
     expect((await darwin(store, { lsofExit: 1 })).result).toBeNull();
-    expect((await darwin(store, { psExit: 1 })).result).toBeNull();
-    expect((await darwin(store, { throwOn: "lsof" })).result).toBeNull();
-    expect((await darwin(store, { throwOn: "ps" })).result).toBeNull();
-    expect((await darwin(store, { ps: "HOME=/does-not-exist GROK_HOME=relative" })).result).toBeNull();
+    expect((await darwin(store, { throwOnSpawn: true })).result).toBeNull();
+    expect((await darwin(store, { environment: null })).result).toBeNull();
+    expect((await darwin(store, { environment: "HOME=/does-not-exist\0GROK_HOME=relative\0" })).result).toBeNull();
+    // the cap counts bytes: 2-byte characters past half a MiB are over it
+    const padding = `ftxt\nn/usr/lib/${"é".repeat(512 * 1024)}\n`;
+    expect(new TextEncoder().encode(store.listing + padding).byteLength).toBeGreaterThan(1024 * 1024);
+    expect((store.listing + padding).length).toBeLessThan(1024 * 1024);
+    expect((await darwin(store, { stdout: store.listing + padding })).result).toBeNull();
+  });
+
+  test("a timed-out lsof is no listing", async () => {
+    const store = place(100);
+    const native = Bun.spawn;
+    const info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({ pane_id: "grok-fixture", foreground_processes: [{ pid: 4242, name: "grok", argv: [exe] }] });
+    // the real kill at the timeout, shortened from 3 s
+    const timeouts: (number | undefined)[] = [];
+    const spawned = spyOn(Bun, "spawn").mockImplementation(((_argv: string[], options: { timeout?: number }) => {
+      timeouts.push(options.timeout);
+      return native(["/bin/sleep", "5"], { stdout: "pipe", stderr: "ignore", timeout: 50 });
+    }) as unknown as typeof Bun.spawn);
+    try {
+      expect(await resolveGrokStore(pane(), store.home, "darwin")).toBeNull();
+      expect(timeouts).toEqual([3000]);
+    } finally { spawned.mockRestore(); info.mockRestore(); }
+  });
+
+  test("an inode lsof prints past 2^53 is not a match", () => {
+    expect(grokLsofEvidence("f4\nD0x1000012\ni1152921500312571448\nn/tmp/events.jsonl\n")?.files).toEqual([
+      { path: "/tmp/events.jsonl", dev: 0x1000012, ino: null },
+    ]);
   });
 
   test("windows, the wrong session source, and anything but one Grok process do not spawn", async () => {

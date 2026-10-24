@@ -2,6 +2,7 @@
 import { opendirSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { HerdrPane } from "../shared/protocol.ts";
+import { darwinProcess } from "./claude-store.ts";
 import { paneProcessInfo } from "./herdr/client.ts";
 
 const SESSION = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -83,13 +84,7 @@ export function grokTranscriptPath(home: string, session: string): string | null
 }
 
 const MAX_LISTED_FILES = 4096;
-const MAX_COMMAND_BYTES = 1024 * 1024;
-
-/** An explicit absolute GROK_HOME, otherwise HOME/.grok. A relative GROK_HOME does not fall through. */
-function absoluteGrokHome(explicit: string | undefined, userHome: string | undefined): string | null {
-  const home = explicit || (userHome ? join(userHome, ".grok") : null);
-  return home && isAbsolute(home) ? home : null;
-}
+const MAX_LISTING_BYTES = 1024 * 1024;
 
 /** Do not substitute the bridge's home when the pane's environment is unreadable. */
 export function grokHomeFromEnvironment(environment: string): string | null {
@@ -97,20 +92,8 @@ export function grokHomeFromEnvironment(environment: string): string | null {
   const explicit = fields.find((field) => field.startsWith("GROK_HOME="))?.slice(10);
   const userHome = fields.find((field) => field.startsWith("HOME="))?.slice(5)
     || fields.find((field) => field.startsWith("USERPROFILE="))?.slice(12);
-  return absoluteGrokHome(explicit, userHome);
-}
-
-/**
- * GROK_HOME or HOME/.grok in one macOS `ps -E -ww -o command=` line. The environment follows
- * the arguments, space-separated, so the last assignment wins and its value runs to the next
- * NAME=. A value holding ` NAME=` is cut there. An argument spelled GROK_HOME=/path is taken
- * when the environment has none; the held file still has to agree. This never reads the
- * bridge process's own environment.
- */
-export function grokHomeFromPsLine(text: string): string | null {
-  const value = (name: string): string | undefined =>
-    [...text.matchAll(new RegExp(`(?:^|\\s)${name}=(.*?)(?=\\s+[A-Za-z_][A-Za-z0-9_]*=|\\s*$)`, "g"))].at(-1)?.[1];
-  return absoluteGrokHome(value("GROK_HOME"), value("HOME") || value("USERPROFILE"));
+  const home = explicit || (userHome ? join(userHome, ".grok") : null);
+  return home && isAbsolute(home) ? home : null;
 }
 
 /**
@@ -219,11 +202,11 @@ export function grokHeldSessionsFromLsof(files: readonly GrokLsofFile[], home: s
   } catch { return null; }
 }
 
-/** A host command's output, or null when it fails, times out or prints too much. */
-async function hostOutput(argv: string[]): Promise<string | null> {
-  const child = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore", timeout: 3000 });
-  const text = await new Response(child.stdout).text();
-  return await child.exited === 0 && text.length <= MAX_COMMAND_BYTES ? text : null;
+/** The process's lsof listing, or null when lsof fails, times out or prints too much. */
+async function lsofListing(pid: number): Promise<string | null> {
+  const child = Bun.spawn(["/usr/sbin/lsof", "-nPbw", "-a", "-p", String(pid), "-FfDin"], { stdout: "pipe", stderr: "ignore", timeout: 3000 });
+  const bytes = await new Response(child.stdout).bytes();
+  return await child.exited === 0 && bytes.byteLength <= MAX_LISTING_BYTES ? new TextDecoder().decode(bytes) : null;
 }
 
 /** Herdr's exact ID, when its unique held directory has the newest events.jsonl. */
@@ -244,19 +227,19 @@ function reportedSessionPath(home: string, sessionId: string, held: Map<string, 
 
 async function resolveDarwinGrokStore(pid: number, sessionId: string, configuredHome: string | undefined): Promise<string | null> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-  const [listed, processEnv] = await Promise.all([
-    hostOutput(["/usr/sbin/lsof", "-nPbw", "-a", "-p", String(pid), "-FfDin"]),
-    configuredHome === undefined ? hostOutput(["/bin/ps", "-E", "-ww", "-p", String(pid), "-o", "command="]) : null,
-  ]);
+  const listed = await lsofListing(pid);
   const evidence = listed === null ? null : grokLsofEvidence(listed);
   if (evidence === null || !isGrokExecutable(evidence.executable ?? "")) return null;
-  const home = configuredHome ?? (processEnv === null ? null : grokHomeFromPsLine(processEnv));
+  // the environment as the kernel keeps it, each entry whole, as /proc/<pid>/environ on Linux
+  const environment = configuredHome === undefined ? darwinProcess.environment(pid) : null;
+  const home = configuredHome ?? (environment === null ? null : grokHomeFromEnvironment(environment));
   if (!home) return null;
   return reportedSessionPath(home, sessionId, grokHeldSessionsFromLsof(evidence.files, home));
 }
 
 /** Bind Herdr's exact ID only when its unique held directory has the newest events.jsonl.
- * Linux reads /proc. macOS reads lsof and ps. Windows stays on the terminal view.
+ * Linux reads /proc. macOS reads lsof and the kernel's copy of the environment. Windows stays
+ * on the terminal view.
  * Write times confirm that ID; they never select a different conversation. */
 export async function resolveGrokStore(pane: HerdrPane, configuredHome?: string, platform: string = process.platform): Promise<string | null> {
   const session = pane.agent_session;
