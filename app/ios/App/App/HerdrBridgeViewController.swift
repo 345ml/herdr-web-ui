@@ -32,6 +32,68 @@ enum PCStore {
     /// Why the last load failed, for the error page.
     static var failure: String?
 
+    /// Redirects in a row that made another origin the PC (NavigationFailureProxy), so two servers
+    /// that redirect to each other stop.
+    static var redirects = 0
+
+    /// Redirects in a row the app follows, in the web view and in `ovisOrigin`; past it the error
+    /// page says so.
+    static let maxRedirects = 5
+
+    /// How long `ovisOrigin` may take in all, its redirects included: the screen stays blank meanwhile.
+    static let probeBudget: TimeInterval = 10
+
+    /// The bridge protocols this app knows, the `bridge_protocol` /api/health?scope=bridge names
+    /// (BRIDGE_PROTOCOL in shared/machines.ts).
+    static let bridgeProtocols: ClosedRange<Int64> = 1...1
+
+    /// The first origin of `path`, the way from the address being opened (`from`) to an Ovis server,
+    /// that went over plain http the app should not switch to on its own: a public address (the
+    /// connect screen warns before one, as `publicHttp` in app/web/shell.js) or any http after https.
+    /// Nil when the whole way is fine.
+    static func insecureHop(from: String?, path: [String]) -> String? {
+        var https = from?.hasPrefix("https://") ?? false
+        for hop in path {
+            if hop.hasPrefix("https://") {
+                https = true
+            } else if https || publicHTTP(hop) {
+                return hop
+            }
+        }
+        return nil
+    }
+
+    /// Whether `origin` is plain http to an address outside a tailnet or a home network, as
+    /// `publicHttp` in app/web/shell.js decides.
+    static func publicHTTP(_ origin: String) -> Bool {
+        guard origin.hasPrefix("http://") else { return false }
+        guard let host = URL(string: origin)?.host?.lowercased() else { return true }
+        let name = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+        // a host whose last label is a number is an IPv4 address to the web view in any form
+        // (134744072, 010.0.0.1, 0x8.8.8.8), which shell.js sees rewritten: only a plain dotted quad
+        // is judged here, any other form counts as public
+        let last = parts.last ?? ""
+        let digits = !last.isEmpty && last.allSatisfy { ("0"..."9").contains($0) }
+        let hex = last.lowercased().hasPrefix("0x") && last.dropFirst(2).allSatisfy { $0.isHexDigit && $0.isASCII }
+        if digits || hex {
+            let quad = parts.compactMap { part -> Int? in
+                guard !part.isEmpty, part.count <= 3, part.allSatisfy({ ("0"..."9").contains($0) }), part == "0" || part.first != "0" else { return nil }
+                return Int(part).flatMap { $0 <= 255 ? $0 : nil }
+            }
+            guard parts.count == 4, quad.count == 4 else { return true }
+            let a = quad[0], b = quad[1]
+            // 10/8, 127/8, 172.16/12, 192.168/16, link-local 169.254/16, and Tailscale's 100.64/10
+            return !(a == 10 || a == 127 || (a == 172 && (16...31).contains(b)) || (a == 192 && b == 168) || (a == 169 && b == 254) || (a == 100 && (64...127).contains(b)))
+        }
+        // ::1, unique local fc00::/7 (Tailscale's fd7a:115c:a1e0::/48 among them) and link-local fe80::/10
+        if name.contains(":") {
+            return !(name == "::1" || name.hasPrefix("fc") || name.hasPrefix("fd") || ["fe8", "fe9", "fea", "feb"].contains { name.hasPrefix($0) })
+        }
+        // a one-word name (a MagicDNS short name, localhost) or a tailnet or home network name
+        return name.contains(".") && ![".ts.net", ".local", ".lan", ".home.arpa", ".internal"].contains { name.hasSuffix($0) }
+    }
+
     static func remember(_ origin: String) {
         saved = [origin] + saved.filter { $0 != origin }
     }
@@ -48,6 +110,225 @@ enum PCStore {
               let host = url.host?.lowercased(), !host.isEmpty else { return nil }
         let shownHost = host.contains(":") ? "[\(host)]" : host
         return url.port.map { "\(scheme)://\(shownHost):\($0)" } ?? "\(scheme)://\(shownHost)"
+    }
+
+    /// The origin of the Ovis server that `target` leads to, or nil. Asks `/api/health?scope=bridge`,
+    /// which Ovis answers to anyone so a client can find its gate, and follows at most `maxRedirects`
+    /// redirects of that request: a sign-in page, another site, a loop or no answer is not Ovis. Only
+    /// such an origin may become the PC: Capacitor gives its bridge to every page the web view keeps.
+    /// Gives up after `probeBudget` in all, however slowly the answers come, and reads at most 64 KB.
+    /// `path` is each origin it asked, in order.
+    static func ovisOrigin(leadingTo target: URL) async -> (ovis: String?, path: [String]) {
+        let deadline = Date().addingTimeInterval(probeBudget)
+        var next = origin(of: target)
+        var path: [String] = []
+        for _ in 0...maxRedirects {
+            let left = deadline.timeIntervalSinceNow
+            guard left > 0, let current = next, let health = URL(string: current + "/api/health?scope=bridge") else { return (nil, path) }
+            path.append(current)
+            // the request's own timeout is per pause in the answer; the session's ends it at the deadline
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForResource = left
+            let session = URLSession(configuration: configuration)
+            defer { session.invalidateAndCancel() }
+            var request = URLRequest(url: health, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: min(5, left))
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            guard let (bytes, response) = try? await session.bytes(for: request, delegate: RefuseRedirects()),
+                  let http = response as? HTTPURLResponse else { return (nil, path) }
+            if (300..<400).contains(http.statusCode) {
+                next = http.value(forHTTPHeaderField: "Location")
+                    .flatMap { URL(string: $0, relativeTo: health) }
+                    .flatMap { origin(of: $0.absoluteURL) }
+                continue
+            }
+            guard http.statusCode == 200 else { return (nil, path) }
+            var data = Data()
+            do {
+                for try await byte in bytes {
+                    data.append(byte)
+                    if data.count > 64 * 1024 { return (nil, path) }
+                }
+            } catch {
+                return (nil, path)
+            }
+            return (answersAsOvis(data) ? current : nil, path)
+        }
+        return (nil, path)
+    }
+
+    /// Whether `data` is /api/health?scope=bridge as Ovis gives it: `ok` true, an `auth` object and a
+    /// bridge protocol this app knows, in strict JSON (JSONSerialization lets a trailing comma pass and
+    /// keeps the first of two equal names). JSON true and numbers both come as NSNumber: only a
+    /// boolean true is ok, and only an integer a protocol (a boolean is a CFBoolean, a number too large
+    /// for one a decimal number).
+    static func answersAsOvis(_ data: Data) -> Bool {
+        guard StrictJSON.valid(data), let answer = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ok = answer["ok"] as? NSNumber, CFGetTypeID(ok) == CFBooleanGetTypeID(), ok.boolValue,
+              answer["auth"] is [String: Any],
+              let version = answer["bridge_protocol"] as? NSNumber, CFGetTypeID(version) == CFNumberGetTypeID(),
+              !CFNumberIsFloatType(version), bridgeProtocols.contains(version.int64Value) else { return false }
+        return true
+    }
+
+    /// `target`'s path, query and fragment on `origin`: a pairing link keeps its code when its
+    /// server's /api/health redirected to another origin.
+    static func start(on origin: String, for target: URL) -> String {
+        guard let parts = URLComponents(url: target, resolvingAgainstBaseURL: true) else { return origin + "/" }
+        let path = parts.percentEncodedPath.isEmpty ? "/" : parts.percentEncodedPath
+        return origin + path + (parts.percentEncodedQuery.map { "?" + $0 } ?? "") + (parts.percentEncodedFragment.map { "#" + $0 } ?? "")
+    }
+}
+
+/// Whether `data` is one JSON value (RFC 8259) and nothing more, with ASCII hex in its `\u`
+/// escapes, nesting at most 32 deep and each object's names given once, as Android's PCStore reads
+/// /api/health: JSONSerialization lets a trailing comma pass and keeps the first of two equal names.
+enum StrictJSON {
+    static func valid(_ data: Data) -> Bool {
+        var reader = Reader(bytes: [UInt8](data))
+        guard reader.value(depth: 0) else { return false }
+        reader.space()
+        return reader.at == reader.bytes.count
+    }
+
+    private struct Reader {
+        let bytes: [UInt8]
+        var at = 0
+
+        mutating func space() {
+            while at < bytes.count, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[at]) { at += 1 }
+        }
+
+        mutating func next() -> UInt8? {
+            guard at < bytes.count else { return nil }
+            at += 1
+            return bytes[at - 1]
+        }
+
+        mutating func word(_ word: String) -> Bool {
+            let expected = Array(word.utf8)
+            guard bytes.count - at >= expected.count, Array(bytes[at..<at + expected.count]) == expected else { return false }
+            at += expected.count
+            return true
+        }
+
+        mutating func value(depth: Int) -> Bool {
+            space()
+            guard at < bytes.count else { return false }
+            switch bytes[at] {
+            case UInt8(ascii: "{"): return depth < 32 && object(depth: depth + 1)
+            case UInt8(ascii: "["): return depth < 32 && array(depth: depth + 1)
+            case UInt8(ascii: "\""): return string() != nil
+            case UInt8(ascii: "t"): return word("true")
+            case UInt8(ascii: "f"): return word("false")
+            case UInt8(ascii: "n"): return word("null")
+            case UInt8(ascii: "-"), UInt8(ascii: "0")...UInt8(ascii: "9"): return number()
+            default: return false
+            }
+        }
+
+        mutating func object(depth: Int) -> Bool {
+            at += 1
+            space()
+            if at < bytes.count, bytes[at] == UInt8(ascii: "}") {
+                at += 1
+                return true
+            }
+            var names = Set<String>()
+            while true {
+                space()
+                guard at < bytes.count, bytes[at] == UInt8(ascii: "\""), let name = string(), names.insert(name).inserted else { return false }
+                space()
+                guard next() == UInt8(ascii: ":"), value(depth: depth) else { return false }
+                space()
+                switch next() {
+                case UInt8(ascii: "}"): return true
+                case UInt8(ascii: ","): continue
+                default: return false
+                }
+            }
+        }
+
+        mutating func array(depth: Int) -> Bool {
+            at += 1
+            space()
+            if at < bytes.count, bytes[at] == UInt8(ascii: "]") {
+                at += 1
+                return true
+            }
+            while true {
+                guard value(depth: depth) else { return false }
+                space()
+                switch next() {
+                case UInt8(ascii: "]"): return true
+                case UInt8(ascii: ","): continue
+                default: return false
+                }
+            }
+        }
+
+        /// The string that starts at `at`, its escapes read, or nil: control characters only escaped,
+        /// and an escape one of JSON's, `\u` with four ASCII hex digits.
+        mutating func string() -> String? {
+            let start = at
+            at += 1
+            while let byte = next() {
+                switch byte {
+                case UInt8(ascii: "\""):
+                    // valid JSON from here on: JSONSerialization reads its escapes and its UTF-8
+                    return try? JSONSerialization.jsonObject(with: Data(bytes[start..<at]), options: .fragmentsAllowed) as? String
+                case 0x00..<0x20:
+                    return nil
+                case UInt8(ascii: "\\"):
+                    switch next() {
+                    case UInt8(ascii: "\""), UInt8(ascii: "\\"), UInt8(ascii: "/"), UInt8(ascii: "b"), UInt8(ascii: "f"), UInt8(ascii: "n"), UInt8(ascii: "r"), UInt8(ascii: "t"):
+                        continue
+                    case UInt8(ascii: "u"):
+                        for _ in 0..<4 {
+                            guard let hex = next(), (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(hex)
+                                || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains(hex) || (UInt8(ascii: "A")...UInt8(ascii: "F")).contains(hex) else { return nil }
+                        }
+                    default:
+                        return nil
+                    }
+                default:
+                    continue
+                }
+            }
+            return nil
+        }
+
+        mutating func number() -> Bool {
+            if bytes[at] == UInt8(ascii: "-") { at += 1 }
+            if at < bytes.count, bytes[at] == UInt8(ascii: "0") {
+                at += 1
+            } else if !digits() {
+                return false
+            }
+            if at < bytes.count, bytes[at] == UInt8(ascii: ".") {
+                at += 1
+                guard digits() else { return false }
+            }
+            if at < bytes.count, bytes[at] == UInt8(ascii: "e") || bytes[at] == UInt8(ascii: "E") {
+                at += 1
+                if at < bytes.count, bytes[at] == UInt8(ascii: "+") || bytes[at] == UInt8(ascii: "-") { at += 1 }
+                guard digits() else { return false }
+            }
+            return true
+        }
+
+        mutating func digits() -> Bool {
+            let start = at
+            while at < bytes.count, (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(bytes[at]) { at += 1 }
+            return at > start
+        }
+    }
+}
+
+/// Hands a redirect back to `ovisOrigin` instead of following it.
+private final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 
@@ -283,6 +564,12 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
         return nsError.domain == "WebKitErrorDomain" && (nsError.code == 102 || nsError.code == 204)
     }
 
+    /// Whether the main frame's navigation has started and not committed yet.
+    private var provisional = false
+    /// Whether the main frame's first page has committed: from then on a user could have followed a
+    /// link from it.
+    private var pageShown = false
+
     init(inner: WKNavigationDelegate?, onFailure: @escaping (WKWebView, String) -> Void) {
         self.inner = inner
         self.onFailure = onFailure
@@ -312,17 +599,80 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
         onFailure(webView, "HTTP \(response.statusCode) \(HTTPURLResponse.localizedString(forStatusCode: response.statusCode).capitalized)")
     }
 
+    /// WebKit has no public mark for a redirect: it comes as a main-frame action, of the type of the
+    /// navigation it redirects, while that navigation has not committed. Until the first page
+    /// commits, such an action to another origin is held back for `follow`: no page is there yet to
+    /// follow a link from, so it comes from the address being opened. After that Capacitor decides,
+    /// as a link could lead to a page that is not the PC's (another port on its host), which must not
+    /// choose the PC.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if !pageShown, provisional, navigationAction.targetFrame?.isMainFrame == true,
+           let current = PCStore.current, let url = navigationAction.request.url,
+           let next = PCStore.origin(of: url), next != current {
+            decisionHandler(.cancel)
+            follow(url, from: current, in: webView)
+            return
+        }
+        if let capacitor = inner as? WebViewDelegationHandler {
+            capacitor.webView(webView, decidePolicyFor: navigationAction, decisionHandler: decisionHandler)
+        } else {
+            decisionHandler(.allow)
+        }
+    }
+
+    /// A redirect of the address being opened to another origin: when that origin answers as Ovis it
+    /// becomes the PC and opens as the first page (http to https, an IP address to the PC's name,
+    /// another port). Anything else, such as a sign-in page, gets no bridge and the error page names
+    /// it: a PC address that leads elsewhere is not a PC. A way that goes over public plain http, or
+    /// from https to http, does not switch on its own: the connect screen warns before a public http
+    /// address.
+    private func follow(_ target: URL, from: String, in webView: WKWebView) {
+        let tooMany = PCStore.redirects >= PCStore.maxRedirects
+        Task { @MainActor [weak self, weak webView] in
+            let probe: (ovis: String?, path: [String]) = tooMany ? (nil, []) : await PCStore.ovisOrigin(leadingTo: target)
+            let ovis = probe.ovis
+            // a web view no longer on screen (the user changed PC meanwhile) decides nothing
+            guard let self, let webView, webView.window != nil else { return }
+            if let ovis, let insecure = PCStore.insecureHop(from: from, path: probe.path) {
+                self.onFailure(webView, "It redirected over plain http to \(insecure), which the app does not follow on its own. If \(ovis) is your PC, open it itself.")
+            } else if let ovis {
+                PCStore.redirects += 1
+                PCStore.current = ovis
+                PCStore.last = ovis
+                PCStore.pendingStart = PCStore.start(on: ovis, for: target)
+                HerdrBridgeViewController.reopen()
+            } else {
+                let place = PCStore.origin(of: target) ?? target.absoluteString
+                let reason = tooMany ? "Too many redirects" : "It redirected to \(place), which did not answer as Ovis. If that is your PC, open \(place) itself."
+                self.onFailure(webView, reason)
+            }
+        }
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        provisional = true
+        inner?.webView?(webView, didStartProvisionalNavigation: navigation)
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        provisional = false
+        pageShown = true
+        inner?.webView?(webView, didCommit: navigation)
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         inner?.webView?(webView, didFinish: navigation)
         onLoaded?()
         // the PC's page is up: a pairing link has done its work, and the PC is one worth keeping
         if let url = webView.url, let origin = PCStore.origin(of: url), origin == PCStore.current {
             PCStore.pendingStart = nil
+            PCStore.redirects = 0
             PCStore.remember(origin)
         }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        provisional = false
         inner?.webView?(webView, didFailProvisionalNavigation: navigation, withError: error)
         if !Self.onPurpose(error) { onFailure(webView, error.localizedDescription) }
     }
