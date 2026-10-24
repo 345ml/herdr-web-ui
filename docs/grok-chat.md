@@ -20,9 +20,8 @@ turn or rewind replaces it. Unavailable native history is explicitly marked in C
 ## Finding the active session
 
 The bridge reads the one foreground Grok process's environment for `GROK_HOME`, or
-`HOME/.grok` when unset. On Linux that environment is `/proc/<pid>/environ`. On macOS it
-is that same process's `ps -E -ww -p <pid> -o command=` line, never the bridge's own home.
-A relative `GROK_HOME` does not fall through to `HOME`. The pane's Grok process is found
+`HOME/.grok` when unset: `/proc/<pid>/environ` on Linux, that process's `ps -E` line on
+macOS, never the bridge's own home. A relative `GROK_HOME` does not fall through to `HOME`. The pane's Grok process is found
 in Herdr's foreground list, and chat needs exactly one. Foreground discovery and the
 executable check both accept `grok` or `grok-…`, with packaging suffixes removed; neither
 requires a particular build number or a numeric suffix. On macOS the executable is the
@@ -43,12 +42,9 @@ For a held path shaped as `<group>/<session>/<file>`, with an accepted session I
 file name starting with `events.jsonl`, a deleted file, a suffix rename such as
 `events.jsonl.old`, or a file that cannot be resolved and statted as a real file uses the
 terminal. Its device and inode must match the held descriptor; a replacement file at the
-same path also uses the terminal. On Linux the write time is the descriptor's. On macOS
-`lsof -nPbw -a -p <pid> -FfDin` lists the holds: only numeric descriptors count (`cwd`,
-`rtd` and `mem` do not), and the device and inode in that listing must match the named
-file. The macOS write time is that named file's, and only after the identity matches. A
-missing device or inode is not a match. `lsof` and `ps` are awaited child processes with a
-three-second timeout. Other file names and paths whose session IDs fail the filter are
+same path also uses the terminal. On macOS `lsof` lists the holds: only numeric
+descriptors count, and a hold whose device or inode is missing or differs from the named
+file's uses the terminal. Other file names and paths whose session IDs fail the filter are
 ignored.
 Renaming to `old-events.jsonl` or moving a session to `.archived-resumed` can therefore hide
 a newer held session and leave the previous conversation visible. Which other files real
