@@ -2238,6 +2238,13 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   With a pane selected they add herdr's **Split pane right / down**, the same **and open it**
   (herdr's `--focus`: the new pane is opened here only then) and, in a tab of several panes,
   **Zoom pane** / **Unzoom pane**.
+- A typed query also lists Settings under a **Settings** heading: the pages, found by their name
+  or the words of their settings, then the groups whose settings a page's words do not name
+  (Typography, Composer, Quick replies, OpenAI API key), each with its page as the subtitle. A
+  page opens Settings on it; a group opens its page scrolled to the group, with the focus on it,
+  as Zed's settings search lands on the setting rather than its page. Titles rank before words
+  found only in aliases, and a page before its groups. A search closed without picking leaves no
+  request behind.
 - Rows are grouped as herdr's Goto picker groups them: a `.menu-heading` per PC/workspace (PC
   name when multiple PCs are registered, workspace name, a linked worktree's branch in mono when
   the name does not say it, the row count), Recent (up to
