@@ -1,6 +1,6 @@
 import type { DialogReader } from "./registry.ts";
 import { pickerPlan } from "./interaction-plan.ts";
-import { ANSI_RE, KEY, PI_MODEL_HINT_RE, PI_ROW_RE, type ParsedPrompt, cleanLine, findLastIndex, finishPrompt, isDivider, keySteps, navigationKeys, piModelRows, wrapped } from "./shared.ts";
+import { ANSI_RE, onePerPass, KEY, PI_MODEL_HINT_RE, PI_ROW_RE, type ParsedPrompt, cleanLine, findLastIndex, finishPrompt, isDivider, keySteps, navigationKeys, piModelRows, wrapped } from "./shared.ts";
 
 /**
  * pi draws one menu widget for its dialogs — an extension's `ctx.ui.select`, `confirm` and
@@ -174,6 +174,8 @@ export function parsePiDialog(screen: string, moved = false): ParsedPrompt | nul
   }, text(uncounted(block.title)));
 }
 
+const dialogRead = onePerPass((screen) => parsePiDialog(screen));
+
 export const readers: readonly DialogReader[] = [
   {
     id: "pi-model", agents: ["pi"], priority: 10,
@@ -189,24 +191,24 @@ export const readers: readonly DialogReader[] = [
   {
     id: "pi-question", agents: ["pi"], priority: 90,
     reread: "none", list: "none",
-    parse: (screen) => {
-      const parsed = parsePiDialog(screen);
+    parse: (screen, ctx) => {
+      const parsed = dialogRead(screen, ctx);
       return parsed?.responder === "pi-question" ? parsed : null;
     },
   },
   {
     id: "pi-confirm", agents: ["pi"], priority: 90,
     reread: "none", list: "none",
-    parse: (screen) => {
-      const parsed = parsePiDialog(screen);
+    parse: (screen, ctx) => {
+      const parsed = dialogRead(screen, ctx);
       return parsed?.responder === "pi-confirm" ? parsed : null;
     },
   },
   {
     id: "pi-input", agents: ["pi"], priority: 90,
     reread: "none", list: "none",
-    parse: (screen) => {
-      const parsed = parsePiDialog(screen);
+    parse: (screen, ctx) => {
+      const parsed = dialogRead(screen, ctx);
       return parsed?.responder === "pi-input" ? parsed : null;
     },
   },
