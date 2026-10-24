@@ -1060,7 +1060,9 @@ describe("check CLI teardown", () => {
     } finally {
       check.kill("SIGKILL");
       await exited;
-      if (existsSync(pidFile)) expect((await endGroup(Number(readFileSync(pidFile, "utf8")), "SIGKILL")).result).toBe("gone");
+      // a pid file caught half written reads 0, and group 0 is this test's own process group
+      const escaped = existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : 0;
+      if (escaped > 0) expect((await endGroup(escaped, "SIGKILL")).result).toBe("gone");
     }
   }, 180_000);
 
