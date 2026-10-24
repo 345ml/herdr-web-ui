@@ -20,9 +20,8 @@ turn or rewind replaces it. Unavailable native history is explicitly marked in C
 ## Finding the active session
 
 The bridge reads the one foreground Grok process's environment for `GROK_HOME`, or
-`HOME/.grok` when unset. On Linux that environment is `/proc/<pid>/environ`. On macOS it
-is that same process's `ps -E -ww -p <pid> -o command=` line, never the bridge's own home.
-A relative `GROK_HOME` does not fall through to `HOME`. The pane's Grok process is found
+`HOME/.grok` when unset: `/proc/<pid>/environ` on Linux, that process's `ps -E` line on
+macOS, never the bridge's own home. A relative `GROK_HOME` does not fall through to `HOME`. The pane's Grok process is found
 in Herdr's foreground list, and chat needs exactly one. Foreground discovery and the
 executable check both accept `grok` or `grok-…`, with packaging suffixes removed; neither
 requires a particular build number or a numeric suffix. On macOS the executable is the

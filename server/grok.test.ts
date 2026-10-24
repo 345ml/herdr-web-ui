@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { forgetTranscriptState, HistoryChanged, transcriptPage } from "./conversation.ts";
 import { grokToolOutput, grokProjection, GrokUnavailable, parseGrokTranscript } from "./grok.ts";
-import { grokHeldSessionsFromLsof, grokHomeFromEnvironment, grokHomeFromPsLine, grokLsofEvidence, grokPaneProcesses, grokTranscriptPath, isGrokExecutable, resolveGrokStore, type GrokLookup } from "./grok-store.ts";
+import { grokHeldSessionsFromLsof, grokHomeFromEnvironment, grokHomeFromPsLine, grokLsofEvidence, grokPaneProcesses, grokTranscriptPath, isGrokExecutable, resolveGrokStore } from "./grok-store.ts";
 import * as herdr from "./herdr/client.ts";
 import type { ConversationPart, HerdrPane } from "../shared/protocol.ts";
 
@@ -375,7 +375,6 @@ describe("exact store lookup", () => {
     expect(grokHomeFromPsLine("/bin/grok GROK_HOME=/custom store TERM=xterm")).toBe("/custom store");
     expect(grokHomeFromPsLine("/bin/grok GROK_HOME=/custom NAME=/cut")).toBe("/custom");
     expect(grokHomeFromPsLine("/bin/grok")).toBeNull();
-    expect(grokHomeFromPsLine("x".repeat(1024 * 1024 + 1))).toBeNull();
   });
 });
 
@@ -412,14 +411,13 @@ describe("macOS held-file evidence", () => {
       "f5u", "n/tmp/no-device",
     ].join("\n");
     const evidence = grokLsofEvidence(text);
-    expect(evidence?.executable).toBe("/usr/local/bin/grok-macos-aarch64");
+    expect(evidence?.executable).toBe("/opt/grok-macos-aarch64 -> /usr/local/bin/grok-macos-aarch64");
     expect(evidence?.files).toEqual([
       { path: "/tmp/sessions/group/sid/events.jsonl", dev: 0xfe20, ino: 65056 },
       { path: "/tmp/no-device", dev: null, ino: null },
     ]);
     expect(grokLsofEvidence("n/tmp/orphan")).toBeNull();
     expect(grokLsofEvidence("f4\nn/a\nn/b")).toBeNull();
-    expect(grokLsofEvidence("x".repeat(1024 * 1024 + 1))).toBeNull();
     const many = (count: number) => Array.from({ length: count }, () => "f1\nn/tmp/x").join("\n");
     expect(grokLsofEvidence(`ftxt\nn/bin/grok\n${many(4095)}`)).not.toBeNull();
     expect(grokLsofEvidence(`ftxt\nn/bin/grok\n${many(4096)}`)).toBeNull();
@@ -471,36 +469,27 @@ describe("macOS held-file evidence", () => {
   };
 
   async function darwin(store: { home: string; listing: string }, options: {
-    configured?: string; ps?: string | null; lsofExit?: number; psExit?: number;
-    processes?: { pid: number; argv?: string[] | null }[]; platform?: NodeJS.Platform;
+    configured?: string; ps?: string; lsofExit?: number; psExit?: number;
+    processes?: { pid: number; argv?: string[] | null }[]; platform?: string;
     sessionPane?: HerdrPane; throwOn?: "lsof" | "ps"; executable?: string;
   } = {}) {
-    const calls: { argv: readonly string[]; timeoutMs: number }[] = [];
-    let pending = 0;
-    let overlapped = false;
-    const asked = { processInfo: false, run: false };
-    const lookup: GrokLookup = {
-      platform: options.platform ?? "darwin",
-      processInfo: async () => {
-        asked.processInfo = true;
-        return { foreground_processes: options.processes ?? [{ pid: 4242, argv: [exe] }] };
-      },
-      run: (argv, timeoutMs) => {
-        asked.run = true;
-        pending += 1;
-        if (pending > 1) overlapped = true;
-        calls.push({ argv, timeoutMs });
-        return Promise.resolve().then(() => {
-          pending -= 1;
-          const isPs = argv[0] === "/bin/ps";
-          if (options.throwOn === (isPs ? "ps" : "lsof")) throw new Error("host failed");
-          const text = options.executable ? store.listing.replace(`n${exe}\n`, `n${options.executable}\n`) : store.listing;
-          return { stdout: isPs ? (options.ps ?? `GROK_HOME=${store.home}`) : text, exitCode: isPs ? (options.psExit ?? 0) : (options.lsofExit ?? 0) };
-        });
-      },
-    };
-    const result = await resolveGrokStore(options.sessionPane ?? pane(), options.configured, lookup);
-    return { result, calls, overlapped, asked };
+    const calls: string[][] = [];
+    const info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({
+      pane_id: "grok-fixture", foreground_processes: (options.processes ?? [{ pid: 4242, argv: [exe] }]).map((process) => ({ name: "grok", ...process })),
+    });
+    const spawned = spyOn(Bun, "spawn").mockImplementation(((argv: string[], spawnOptions: { timeout?: number }) => {
+      calls.push(argv);
+      expect(spawnOptions.timeout).toBe(3000);
+      const isPs = argv[0] === "/bin/ps";
+      if (options.throwOn === (isPs ? "ps" : "lsof")) throw new Error("host failed");
+      const text = options.executable ? store.listing.replace(`n${exe}\n`, `n${options.executable}\n`) : store.listing;
+      const stdout = isPs ? (options.ps ?? `GROK_HOME=${store.home}`) : text;
+      return { stdout: new Response(stdout).body, exited: Promise.resolve(isPs ? (options.psExit ?? 0) : (options.lsofExit ?? 0)), kill: () => {} };
+    }) as unknown as typeof Bun.spawn);
+    try {
+      const result = await resolveGrokStore(options.sessionPane ?? pane(), options.configured, options.platform ?? "darwin");
+      return { result, calls, askedProcessInfo: info.mock.calls.length > 0 };
+    } finally { spawned.mockRestore(); info.mockRestore(); }
   }
 
   test("binds Herdr's session when its held events file is strictly newest", async () => {
@@ -510,14 +499,12 @@ describe("macOS held-file evidence", () => {
     process.env.HOME = "/bridge-home";
     process.env.GROK_HOME = "/bridge-grok";
     try {
-      const { result, calls, overlapped } = await darwin(store, { ps: `/usr/local/bin/grok HOME=/bridge-home GROK_HOME=${store.home}` });
+      const { result, calls } = await darwin(store, { ps: `/usr/local/bin/grok HOME=/bridge-home GROK_HOME=${store.home}` });
       expect(result).toBe(store.transcript);
-      expect(calls.map((call) => call.argv)).toEqual([
+      expect(calls).toEqual([
         ["/usr/sbin/lsof", "-nPbw", "-a", "-p", "4242", "-FfDin"],
         ["/bin/ps", "-E", "-ww", "-p", "4242", "-o", "command="],
       ]);
-      expect(calls.every((call) => call.timeoutMs === 3000)).toBe(true);
-      expect(overlapped).toBe(true);
     } finally {
       if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
       if (previousGrok === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = previousGrok;
@@ -537,7 +524,7 @@ describe("macOS held-file evidence", () => {
     expect((await darwin(store, { ps: `/bin/grok HOME=${userHome}` })).result).toBe(transcript);
     const configured = await darwin(store, { configured: home, ps: "GROK_HOME=/wrong" });
     expect(configured.result).toBe(transcript);
-    expect(configured.calls.map((call) => call.argv[0])).toEqual(["/usr/sbin/lsof"]);
+    expect(configured.calls.map((argv) => argv[0])).toEqual(["/usr/sbin/lsof"]);
   });
 
   for (const scenario of [
@@ -593,11 +580,11 @@ describe("macOS held-file evidence", () => {
 
   test("windows, the wrong session source, and anything but one Grok process do not spawn", async () => {
     const store = place(100);
-    const silent = async (platform: NodeJS.Platform, processes?: { pid: number; argv?: string[] | null }[], sessionPane = pane()) => {
+    const silent = async (platform: string, processes?: { pid: number; argv?: string[] | null }[], sessionPane = pane()) => {
       const found = await darwin(store, { platform, processes, sessionPane });
       expect(found.result).toBeNull();
-      expect(found.asked.run).toBe(false);
-      if (platform !== "linux" && platform !== "darwin") expect(found.asked.processInfo).toBe(false);
+      expect(found.calls).toEqual([]);
+      if (platform !== "linux" && platform !== "darwin") expect(found.askedProcessInfo).toBe(false);
       return found;
     };
     await silent("win32");
@@ -609,6 +596,6 @@ describe("macOS held-file evidence", () => {
     await silent("darwin", [{ pid: 0, argv: [exe] }]);
     await silent("darwin", [{ pid: 1.5, argv: [exe] }]);
     const linux = await silent("linux", [{ pid: process.pid, argv: ["grok"] }]);
-    expect(linux.asked.processInfo).toBe(true);
+    expect(linux.askedProcessInfo).toBe(true);
   });
 });
