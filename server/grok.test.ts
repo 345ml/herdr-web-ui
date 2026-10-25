@@ -402,7 +402,7 @@ describe("macOS held-file evidence", () => {
       "fmem", "n/usr/lib/dyld",
       "f4", "D0xfe20", "i65056", "n/tmp/sessions/group/sid/events.jsonl",
       "f5u", "n/tmp/no-device",
-    ].join("\n");
+    ].join("\n") + "\n";
     const evidence = grokLsofEvidence(text);
     expect(evidence?.executable).toBe("/opt/grok-macos-aarch64 -> /usr/local/bin/grok-macos-aarch64");
     expect(evidence?.files).toEqual([
@@ -411,7 +411,7 @@ describe("macOS held-file evidence", () => {
     ]);
     expect(grokLsofEvidence("n/tmp/orphan")).toBeNull();
     expect(grokLsofEvidence("f4\nn/a\nn/b")).toBeNull();
-    const many = (count: number) => Array.from({ length: count }, () => "f1\nn/tmp/x").join("\n");
+    const many = (count: number) => Array.from({ length: count }, () => "f1\nn/tmp/x\n").join("");
     expect(grokLsofEvidence(`ftxt\nn/bin/grok\n${many(4095)}`)).not.toBeNull();
     expect(grokLsofEvidence(`ftxt\nn/bin/grok\n${many(4096)}`)).toBeNull();
   });
@@ -465,9 +465,11 @@ describe("macOS held-file evidence", () => {
     configured?: string; environment?: string | null; lsofExit?: number; stdout?: string;
     processes?: { pid: number; argv?: string[] | null }[]; platform?: string;
     sessionPane?: HerdrPane; throwOnSpawn?: boolean; executable?: string;
+    starts?: (string | null)[];
   } = {}) {
     const calls: string[][] = [];
     const timeouts: (number | undefined)[] = [];
+    const starts = [...(options.starts ?? ["Sun Oct 25 12:00:00 2026\n", "Sun Oct 25 12:00:00 2026\n"])];
     const info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({
       pane_id: "grok-fixture", foreground_processes: (options.processes ?? [{ pid: 4242, argv: [exe] }]).map((process) => ({ name: "grok", ...process })),
     });
@@ -477,6 +479,10 @@ describe("macOS held-file evidence", () => {
       return options.environment === undefined ? `HOME=/bridge-home\0GROK_HOME=${store.home}\0` : options.environment;
     });
     const spawned = spyOn(Bun, "spawn").mockImplementation(((argv: string[], spawnOptions: { timeout?: number }) => {
+      if (argv[0] === "/bin/ps") {
+        const start = starts.shift() ?? null;
+        return { stdout: new Response(start ?? "").body, exited: Promise.resolve(start === null ? 1 : 0), kill: () => {} };
+      }
       calls.push(argv);
       timeouts.push(spawnOptions.timeout);
       if (options.throwOnSpawn) throw new Error("host failed");
@@ -603,6 +609,22 @@ describe("macOS held-file evidence", () => {
     }
   });
 
+  test("a competing name cut mid-record never binds the reported session", async () => {
+    const store = place(100);
+    expect((await darwin({ ...store, listing: store.listing + "f99\nD0xfe20\ni42\nn/fixture" })).result).toBeNull();
+  });
+
+  test("a reused or unreadable process start never binds evidence to the pane", async () => {
+    const store = place(100);
+    for (const starts of [
+      ["Sun Oct 25 12:00:00 2026\n", "Sun Oct 25 12:00:01 2026\n"],
+      [null],
+      ["Sun Oct 25 12:00:00 2026\n", null],
+    ]) {
+      expect((await darwin(store, { starts })).result).toBeNull();
+    }
+  });
+
   test("a failed, oversized or unreadable read is no listing", async () => {
     const store = place(100);
     expect((await darwin(store, { lsofExit: 1 })).result).toBeNull();
@@ -622,7 +644,10 @@ describe("macOS held-file evidence", () => {
     const info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({ pane_id: "grok-fixture", foreground_processes: [{ pid: 4242, name: "grok", argv: [exe] }] });
     // the real kill at the timeout, shortened from 3 s
     const timeouts: (number | undefined)[] = [];
-    const spawned = spyOn(Bun, "spawn").mockImplementation(((_argv: string[], options: { timeout?: number }) => {
+    const spawned = spyOn(Bun, "spawn").mockImplementation(((argv: string[], options: { timeout?: number }) => {
+      if (argv[0] === "/bin/ps") {
+        return { stdout: new Response("Sun Oct 25 12:00:00 2026\n").body, exited: Promise.resolve(0), kill: () => {} };
+      }
       timeouts.push(options.timeout);
       return native(["/bin/sleep", "5"], { stdout: "pipe", stderr: "ignore", timeout: 50 });
     }) as unknown as typeof Bun.spawn);

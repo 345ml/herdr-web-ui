@@ -155,6 +155,8 @@ export interface GrokLsofFile { path: string; dev: number | null; ino: number | 
  * would see in /proc/pid/fd. The first txt entry is the executable; macOS also lists mapped
  * files as txt after it. cwd, rtd and mem are not holds. */
 export function grokLsofEvidence(text: string): { executable: string | null; files: GrokLsofFile[] } | null {
+  // -F without -0 terminates every field with a newline, including the last name.
+  if (!text.endsWith("\n")) return null;
   const records: { fd: string; dev: number | null; ino: number | null; name: string | null }[] = [];
   const number = (field: string): number | null => {
     // Number() reads lsof's 0x-prefixed device as well as the decimal inode.
@@ -230,6 +232,8 @@ function reportedSessionPath(home: string, sessionId: string, held: Map<string, 
 
 async function resolveDarwinGrokStore(pid: number, sessionId: string, configuredHome: string | undefined): Promise<string | null> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  const started = await darwinGrokProcessStart(pid);
+  if (started === null) return null;
   const listed = await lsofListing(pid);
   const evidence = listed === null ? null : grokLsofEvidence(listed);
   if (evidence === null || !isGrokExecutable(evidence.executable ?? "")) return null;
@@ -237,7 +241,18 @@ async function resolveDarwinGrokStore(pid: number, sessionId: string, configured
   const environment = configuredHome === undefined ? darwinProcess.environment(pid) : null;
   const home = configuredHome ?? (environment === null ? null : grokHomeFromEnvironment(environment));
   if (!home) return null;
-  return reportedSessionPath(home, sessionId, grokHeldSessionsFromLsof(evidence.files, home));
+  const path = reportedSessionPath(home, sessionId, grokHeldSessionsFromLsof(evidence.files, home));
+  return await darwinGrokProcessStart(pid) === started ? path : null;
+}
+
+/** Match the process before and after evidence reads, not just its reusable numeric PID. */
+async function darwinGrokProcessStart(pid: number): Promise<string | null> {
+  const child = Bun.spawn(["/bin/ps", "-o", "lstart=", "-p", String(pid)], {
+    stdout: "pipe", stderr: "ignore", timeout: 3000,
+    env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+  });
+  const text = (await new Response(child.stdout).text()).replace(/\s+/g, " ").trim();
+  return await child.exited === 0 && text !== "" ? text : null;
 }
 
 /** Bind Herdr's exact ID only when its unique held directory has the newest events.jsonl.
