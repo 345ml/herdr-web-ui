@@ -230,9 +230,9 @@ function reportedSessionPath(home: string, sessionId: string, held: Map<string, 
   return path !== null && dirname(path) === sessionDir ? path : null;
 }
 
-async function resolveDarwinGrokStore(pid: number, sessionId: string, configuredHome: string | undefined): Promise<string | null> {
+async function resolveDarwinGrokStore(paneId: string, pid: number, sessionId: string, configuredHome: string | undefined): Promise<string | null> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-  const started = await darwinGrokProcessStart(pid);
+  const started = darwinProcess.startTime(pid);
   if (started === null) return null;
   const listed = await lsofListing(pid);
   const evidence = listed === null ? null : grokLsofEvidence(listed);
@@ -242,17 +242,11 @@ async function resolveDarwinGrokStore(pid: number, sessionId: string, configured
   const home = configuredHome ?? (environment === null ? null : grokHomeFromEnvironment(environment));
   if (!home) return null;
   const path = reportedSessionPath(home, sessionId, grokHeldSessionsFromLsof(evidence.files, home));
-  return await darwinGrokProcessStart(pid) === started ? path : null;
-}
-
-/** Match the process before and after evidence reads, not just its reusable numeric PID. */
-async function darwinGrokProcessStart(pid: number): Promise<string | null> {
-  const child = Bun.spawn(["/bin/ps", "-o", "lstart=", "-p", String(pid)], {
-    stdout: "pipe", stderr: "ignore", timeout: 3000,
-    env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
-  });
-  const text = (await new Response(child.stdout).text()).replace(/\s+/g, " ").trim();
-  return await child.exited === 0 && text !== "" ? text : null;
+  if (darwinProcess.startTime(pid) !== started) return null;
+  // The initial foreground list may predate the sampled process. Confirm membership again,
+  // then bracket that asynchronous RPC with the same kernel birth time as the evidence.
+  const current = grokPaneProcesses((await paneProcessInfo(paneId)) ?? {});
+  return current.length === 1 && current[0]!.pid === pid && darwinProcess.startTime(pid) === started ? path : null;
 }
 
 /** Bind Herdr's exact ID only when its unique held directory has the newest events.jsonl.
@@ -268,7 +262,7 @@ export async function resolveGrokStore(pane: HerdrPane, configuredHome?: string,
     const processes = grokPaneProcesses((await paneProcessInfo(pane.pane_id)) ?? {});
     if (processes.length !== 1) return null;
     const owner = processes[0]!;
-    if (platform === "darwin") return await resolveDarwinGrokStore(owner.pid, session.value, configuredHome);
+    if (platform === "darwin") return await resolveDarwinGrokStore(pane.pane_id, owner.pid, session.value, configuredHome);
     if (!isGrokExecutable(readlinkSync(`/proc/${owner.pid}/exe`))) return null;
     const home = configuredHome ?? grokHomeFromEnvironment(readFileSync(`/proc/${owner.pid}/environ`, "utf8"));
     if (!home) return null;

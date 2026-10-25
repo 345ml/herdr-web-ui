@@ -465,24 +465,29 @@ describe("macOS held-file evidence", () => {
     configured?: string; environment?: string | null; lsofExit?: number; stdout?: string;
     processes?: { pid: number; argv?: string[] | null }[]; platform?: string;
     sessionPane?: HerdrPane; throwOnSpawn?: boolean; executable?: string;
-    starts?: (string | null)[];
+    microStarts?: (bigint | null)[];
+    recheckedProcesses?: { pid: number; argv?: string[] | null }[];
   } = {}) {
     const calls: string[][] = [];
     const timeouts: (number | undefined)[] = [];
-    const starts = [...(options.starts ?? ["Sun Oct 25 12:00:00 2026\n", "Sun Oct 25 12:00:00 2026\n"])];
+    const microStarts = [...(options.microStarts ?? [1792929600000001n, 1792929600000001n, 1792929600000001n])];
+    const startTime = spyOn(darwinProcess, "startTime").mockImplementation(() => microStarts.shift() ?? null);
     const info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({
       pane_id: "grok-fixture", foreground_processes: (options.processes ?? [{ pid: 4242, argv: [exe] }]).map((process) => ({ name: "grok", ...process })),
     });
+    if (options.recheckedProcesses) {
+      info.mockResolvedValueOnce({
+        pane_id: "grok-fixture", foreground_processes: [{ pid: 4242, name: "grok", argv: [exe] }],
+      }).mockResolvedValue({
+        pane_id: "grok-fixture", foreground_processes: options.recheckedProcesses.map((process) => ({ name: "grok", ...process })),
+      });
+    }
     const environments: number[] = [];
     const environment = spyOn(darwinProcess, "environment").mockImplementation((pid) => {
       environments.push(pid);
       return options.environment === undefined ? `HOME=/bridge-home\0GROK_HOME=${store.home}\0` : options.environment;
     });
     const spawned = spyOn(Bun, "spawn").mockImplementation(((argv: string[], spawnOptions: { timeout?: number }) => {
-      if (argv[0] === "/bin/ps") {
-        const start = starts.shift() ?? null;
-        return { stdout: new Response(start ?? "").body, exited: Promise.resolve(start === null ? 1 : 0), kill: () => {} };
-      }
       calls.push(argv);
       timeouts.push(spawnOptions.timeout);
       if (options.throwOnSpawn) throw new Error("host failed");
@@ -492,7 +497,7 @@ describe("macOS held-file evidence", () => {
     try {
       const result = await resolveGrokStore(options.sessionPane ?? pane(), options.configured, options.platform ?? "darwin");
       return { result, calls, timeouts, environments, askedProcessInfo: info.mock.calls.length > 0 };
-    } finally { spawned.mockRestore(); environment.mockRestore(); info.mockRestore(); }
+    } finally { spawned.mockRestore(); environment.mockRestore(); info.mockRestore(); startTime.mockRestore(); }
   }
 
   test("binds Herdr's session when its held events file is strictly newest", async () => {
@@ -616,13 +621,30 @@ describe("macOS held-file evidence", () => {
 
   test("a reused or unreadable process start never binds evidence to the pane", async () => {
     const store = place(100);
-    for (const starts of [
-      ["Sun Oct 25 12:00:00 2026\n", "Sun Oct 25 12:00:01 2026\n"],
+    for (const microStarts of [
+      [1792929600000001n, 1792929601000001n],
       [null],
-      ["Sun Oct 25 12:00:00 2026\n", null],
+      [1792929600000001n, null],
     ]) {
-      expect((await darwin(store, { starts })).result).toBeNull();
+      expect((await darwin(store, { microStarts })).result).toBeNull();
     }
+  });
+
+  test("a replacement before the first start sample must still belong to this pane", async () => {
+    const store = place(100);
+    for (const recheckedProcesses of [[], [{ pid: 4243, argv: [exe] }], [{ pid: 4242, argv: ["/bin/sh"] }]]) {
+      expect((await darwin(store, { recheckedProcesses })).result).toBeNull();
+    }
+  });
+
+  test("PID reuse between evidence reads within the same second never binds", async () => {
+    const store = place(100);
+    expect((await darwin(store, { microStarts: [1792929600000001n, 1792929600000002n] })).result).toBeNull();
+  });
+
+  test("PID reuse during the final foreground lookup never binds", async () => {
+    const store = place(100);
+    expect((await darwin(store, { microStarts: [1792929600000001n, 1792929600000001n, 1792929600000002n] })).result).toBeNull();
   });
 
   test("a failed, oversized or unreadable read is no listing", async () => {
@@ -642,19 +664,17 @@ describe("macOS held-file evidence", () => {
     const store = place(100);
     const native = Bun.spawn;
     const info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({ pane_id: "grok-fixture", foreground_processes: [{ pid: 4242, name: "grok", argv: [exe] }] });
+    const startTime = spyOn(darwinProcess, "startTime").mockReturnValue(1792929600000001n);
     // the real kill at the timeout, shortened from 3 s
     const timeouts: (number | undefined)[] = [];
     const spawned = spyOn(Bun, "spawn").mockImplementation(((argv: string[], options: { timeout?: number }) => {
-      if (argv[0] === "/bin/ps") {
-        return { stdout: new Response("Sun Oct 25 12:00:00 2026\n").body, exited: Promise.resolve(0), kill: () => {} };
-      }
       timeouts.push(options.timeout);
       return native(["/bin/sleep", "5"], { stdout: "pipe", stderr: "ignore", timeout: 50 });
     }) as unknown as typeof Bun.spawn);
     try {
       expect(await resolveGrokStore(pane(), store.home, "darwin")).toBeNull();
       expect(timeouts).toEqual([3000]);
-    } finally { spawned.mockRestore(); info.mockRestore(); }
+    } finally { spawned.mockRestore(); info.mockRestore(); startTime.mockRestore(); }
   });
 
   test("an inode lsof prints past 2^53 is not a match", () => {
