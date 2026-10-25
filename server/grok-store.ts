@@ -172,6 +172,9 @@ export function grokLsofEvidence(text: string): { executable: string | null; fil
     } else if (last && line.startsWith("D")) last.dev = number(line.slice(1));
     else if (last && line.startsWith("i")) last.ino = number(line.slice(1));
   }
+  // A shortened listing may end after a descriptor's identity but before its name. That
+  // descriptor could be a newer session, so the remaining named records are not complete evidence.
+  if (records.some((record) => record.name === null || record.name === "")) return null;
   const named = records.filter((record): record is typeof record & { name: string } => record.name !== null);
   return {
     executable: named.find((record) => record.fd === "txt")?.name ?? null,

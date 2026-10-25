@@ -596,6 +596,13 @@ describe("macOS held-file evidence", () => {
     expect((await darwin(store, { executable: "/usr/local/bin/grok (deleted)" })).result).toBe(store.transcript);
   });
 
+  test("an incomplete competing descriptor never leaves a shorter binding list", async () => {
+    const store = place(100);
+    for (const incomplete of ["f99\n", "f99\nD0xfe20\ni42\n", "f99\nD0xfe20\ni42\nftxt\nn/usr/lib/dyld\n"]) {
+      expect((await darwin({ ...store, listing: store.listing + incomplete })).result).toBeNull();
+    }
+  });
+
   test("a failed, oversized or unreadable read is no listing", async () => {
     const store = place(100);
     expect((await darwin(store, { lsofExit: 1 })).result).toBeNull();
